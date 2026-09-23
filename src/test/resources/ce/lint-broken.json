@@ -1,0 +1,44 @@
+{
+  "ok": false,
+  "file": "/workspace/broken.xml",
+  "counts": {
+    "hint": 1,
+    "error": 2
+  },
+  "diagnostics": [
+    {
+      "rule": "DM303",
+      "severity": "hint",
+      "message": "Without setup rngSeed, repeated executions intentionally differ.",
+      "fix_hint": "Add rngSeed when deterministic replay is required.",
+      "element": "setup",
+      "path": "/setup",
+      "name": null,
+      "line": 1,
+      "docs": "reference://rules/DM303"
+    },
+    {
+      "rule": "DM103",
+      "severity": "error",
+      "message": "An element contains an attribute absent from its registered runtime model. Evidence: attribute 'bogus' appears on <generate>",
+      "fix_hint": "Use an attribute exposed by the element model. Valid attributes: converter, count, cyclic, distribution, end, exportUri, interval, maxCount, minCount, mpPlatform, multiprocessing, name, numProcess, offset, pageSize, script, selector, separator, source, sourceEntity, sourceScripted, start, target, targetEntity, type, unique, variablePrefix, variableSuffix.",
+      "element": "generate",
+      "path": "/setup/generate",
+      "name": "x",
+      "line": 2,
+      "docs": "reference://rules/DM103"
+    },
+    {
+      "rule": "DM212",
+      "severity": "error",
+      "message": "count must be an integer literal or a supported script expression. Evidence: count='abc', runtime parser returned: must be string of digits or script, but get: 'abc'",
+      "fix_hint": "Use digits or a {script} expression. Examples: count=\"100\" or count=\"{customers * 3}\".",
+      "element": "generate",
+      "path": "/setup/generate",
+      "name": "x",
+      "line": 2,
+      "docs": "reference://rules/DM212"
+    }
+  ],
+  "truncated": 0
+}
