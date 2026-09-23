@@ -1,0 +1,21 @@
+{
+  "ok": false,
+  "file": "/workspace/bad.xml",
+  "counts": {
+    "error": 1
+  },
+  "diagnostics": [
+    {
+      "rule": "DM001",
+      "severity": "error",
+      "message": "XML is not well-formed: Start tag expected, '<' not found, line 1, column 1",
+      "fix_hint": "Fix the XML syntax first — close every tag, quote every attribute value.",
+      "element": "setup",
+      "path": "/",
+      "name": null,
+      "line": 1,
+      "docs": null
+    }
+  ],
+  "truncated": 0
+}

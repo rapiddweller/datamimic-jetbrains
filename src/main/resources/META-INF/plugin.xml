@@ -1,0 +1,59 @@
+<!-- https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Marketplace identity: never change after the first release. -->
+    <id>com.rapiddweller.datamimic</id>
+    <name>DATAMIMIC</name>
+    <vendor url="https://datamimic.io">rapiddweller</vendor>
+
+    <description><![CDATA[
+        Author and run deterministic DATAMIMIC test data models in your IDE.
+        ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.xml</depends>
+    <depends>com.intellij.modules.json</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- id must match TOOL_WINDOW_ID -->
+        <toolWindow id="DATAMIMIC" anchor="left" icon="/icons/datamimic.svg"
+                    factoryClass="com.rapiddweller.datamimic.ide.ProjectsToolWindowFactory"/>
+        <writingAccessProvider implementation="com.rapiddweller.datamimic.ide.editing.PlatformWritingAccess"/>
+        <editorNotificationProvider implementation="com.rapiddweller.datamimic.ide.editing.PlatformFileBanner"/>
+        <directoryIndexExcludePolicy implementation="com.rapiddweller.datamimic.ide.editing.ProjectFolderExcludePolicy"/>
+        <notificationGroup id="DATAMIMIC" displayType="BALLOON"/>
+        <postStartupActivity implementation="com.rapiddweller.datamimic.ide.ActiveProjectStartup"/>
+
+        <!-- Local descriptors with DATAMIMIC CE -->
+        <externalAnnotator language="XML" implementationClass="com.rapiddweller.datamimic.ide.local.CeLintAnnotator"/>
+        <configurationType implementation="com.rapiddweller.datamimic.ide.local.CeRunConfigurationType"/>
+        <runConfigurationProducer implementation="com.rapiddweller.datamimic.ide.local.CeRunConfigurationProducer"/>
+        <applicationConfigurable parentId="tools" instance="com.rapiddweller.datamimic.ide.local.DatamimicConfigurable"
+                                 id="com.rapiddweller.datamimic.settings" displayName="DATAMIMIC"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="JavaScript">
+        <JsonSchema.ProviderFactory implementation="com.rapiddweller.datamimic.ide.local.AuthoringSchemaProviderFactory"/>
+    </extensions>
+
+    <applicationListeners>
+        <listener class="com.rapiddweller.datamimic.ide.ActiveProjectCloser"
+                  topic="com.intellij.openapi.project.ProjectCloseListener"/>
+        <listener class="com.rapiddweller.datamimic.ide.local.CeLintOnSave"
+                  topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
+        <listener class="com.rapiddweller.datamimic.ide.editing.FolderChangeListener"
+                  topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
+    </applicationListeners>
+
+    <actions>
+        <action id="Datamimic.CopyCeMcpConfiguration" class="com.rapiddweller.datamimic.ide.local.CopyCeMcpConfigurationAction"
+                text="Copy DATAMIMIC CE MCP Configuration"
+                description="Copy an MCP server entry that lets IDE agents author DATAMIMIC models with the local CE">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+
+    <projectListeners>
+        <listener class="com.rapiddweller.datamimic.ide.editing.PlatformEditorListener"
+                  topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
+    </projectListeners>
+</idea-plugin>
