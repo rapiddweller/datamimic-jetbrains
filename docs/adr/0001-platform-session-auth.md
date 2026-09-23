@@ -26,11 +26,11 @@ sequenceDiagram
   participant P as Plugin
   participant S as Platform
   U->>P: platform URL, email, password (dialog, prefilled from the last sign-in)
-  P->>S: POST /api/v2/session/login (form, Origin: <platform origin>)
+  P->>S: POST /api/v2/session/login (form, Origin = platform origin)
   S-->>P: 204 Set-Cookie datamimic_session (HttpOnly, 30 days)
   P->>P: keep only the session id, in the IDE password safe
-  P->>S: every request: Cookie + Origin + X-DATAMIMIC-Client-Binding
-  S-->>P: 401 → session ended → sign in again
+  P->>S: every request: Cookie, Origin, X-DATAMIMIC-Client-Binding
+  S-->>P: 401 means the session ended, sign in again
 ```
 
 - The dialog remembers the last platform URL and email. The password is stored only when the user ticks

@@ -41,23 +41,23 @@ Not built yet: hosted language server (completion/diagnostics for platform files
 ```mermaid
 flowchart TB
   subgraph ide["ide: IntelliJ adapters"]
-    TW[Tool window: projects, open, generate]
-    FL[File listener, write access, banners]
-    AP[ActiveProject: window ↔ folder, agents]
-    LOC[CE: lint, run configuration, schema]
+    TW["Tool window: projects, open, generate"]
+    FL["File listener, write access, banners"]
+    AP["ActiveProject: window and folder, agents"]
+    LOC["CE: lint, run configuration, schema"]
   end
   subgraph core["core: no IntelliJ imports, plain JUnit"]
-    HTTP[PlatformHttp + SessionService]
-    WS[WorkspaceSession: tree, event stream, locks, uploads]
-    SY[ProjectSync + ProjectFolder: three-way sync]
+    HTTP["PlatformHttp and SessionService"]
+    WS["WorkspaceSession: tree, event stream, locks, uploads"]
+    SY["ProjectSync and ProjectFolder: three-way sync"]
     GEN[GenerationApi]
     CE[CeCli]
   end
   ide --> core
-  HTTP --> P[(DATAMIMIC Platform)]
+  HTTP --> P[("DATAMIMIC Platform")]
   WS --> P
-  SY --> D[(~/DATAMIMIC/...)]
-  CE --> C[datamimic CLI]
+  SY --> D[("Local project folders")]
+  CE --> C["datamimic CLI"]
 ```
 
 `core` never imports `com.intellij`; a test enforces it.

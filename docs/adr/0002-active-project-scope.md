@@ -18,11 +18,11 @@ window; a window never switches projects.
 
 ```mermaid
 flowchart LR
-  O[Window opens a project folder] --> A[Activate: sync, locks, live updates]
-  A --> T[Project token, 24 h]
-  T --> R[Register with Claude Code and Junie, in the folder]
-  X[Window closes] --> U[Unregister agents]
-  U --> D[Deactivate: locks back, token revoked if no window uses the project]
+  O["Window opens a project folder"] --> A["Activate: sync, locks, live updates"]
+  A --> T["Project token, 24 h"]
+  T --> R["Register with Claude Code and Junie, in the folder"]
+  X["Window closes"] --> U["Unregister agents"]
+  U --> D["Deactivate: locks back, token revoked if no window uses the project"]
 ```
 
 - Files, locks, live updates, generation and agents of a window belong to its project. A window whose folder belongs

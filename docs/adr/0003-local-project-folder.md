@@ -22,12 +22,12 @@ This reverses the VS Code extension's "no local copy" rule for JetBrains IDEs on
 ```mermaid
 flowchart LR
   subgraph local["Project folder"]
-    F[files]
-    M[".datamimic/workspace.json: platform + project id"]
-    S[".datamimic/state.json: ETag + SHA-256 per file"]
+    F["files"]
+    M[".datamimic/workspace.json: platform and project id"]
+    S[".datamimic/state.json: ETag and SHA-256 per file"]
   end
-  F -- "save, or any change seen by a refresh" --> U["upload: lease + If-Match, or create with If-None-Match: *"]
-  U --> P[(Platform)]
+  F -- "save, or any change seen by a refresh" --> U["upload with lease and If-Match, or create with If-None-Match"]
+  U --> P[("Platform")]
   P -- "workspace_changed" --> D["download, unless the editor has unsaved edits"]
   D --> F
 ```
