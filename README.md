@@ -1,8 +1,11 @@
 # DATAMIMIC for JetBrains IDEs
 
-Author and run deterministic DATAMIMIC test data models in your IDE: edit projects on a DATAMIMIC Platform, or work
-on local descriptors with DATAMIMIC CE.
+Work on DATAMIMIC Platform projects in your IDE: synced project folders, edit locks, the platform's language server,
+data generation, and MCP access for IDE agents.
 
+> **Requires a DATAMIMIC Enterprise Platform** and an account on it; the plugin does not work without one. Support for
+> the open-source DATAMIMIC CE is planned.
+>
 > Status: early development, IntelliJ Platform 2025.3+.
 
 ## Features
@@ -23,18 +26,12 @@ on local descriptors with DATAMIMIC CE.
   (the folder's `.junie/mcp/mcp.json`). AI Assistant: *Copy MCP Configuration for AI Assistant*.
 - Server-side edit locks: showing a file takes its lock, a banner explains when someone else holds it, and
   *Take over…* overrides it after confirmation.
+- Completion and checks for the folder's XML files from the platform's language server
+  ([ADR 0004](docs/adr/0004-hosted-language-server.md)). The status bar shows *DATAMIMIC LSP: connected / ready / off /
+  error*; click it to turn the server on or off for the project, or to check again. Needs an IDE with the LSP API.
 - *Generate Data…* on the window's project: runs on the platform and shows the log and a preview per product.
 
-**Local descriptors** (any XML file whose root is `<setup>`, outside platform project folders)
-
-- Lint findings from `datamimic lint` in the editor, refreshed after each save.
-- Run configuration *DATAMIMIC*: right-click a descriptor → Run. Each run writes to `output/ide-<timestamp>/`.
-- JSON Schema completion and validation for `*.dm.json` authoring models.
-- *Tools → Copy DATAMIMIC CE MCP Configuration*: an MCP server entry for IDE agents (stdio, no credentials).
-- DATAMIMIC CE is found in *Settings → Tools → DATAMIMIC*, else in the project's `.venv`, else on `PATH`.
-  Install it with `pip install "datamimic-ce[mcp]"`.
-
-Not built yet: hosted language server (completion/diagnostics for platform files), CE completion.
+Local DATAMIMIC CE support is not part of this version; it follows once CE authoring is reworked.
 
 ## Architecture
 
@@ -44,20 +41,20 @@ flowchart TB
     TW["Tool window: projects, open, generate"]
     FL["File listener, write access, banners"]
     AP["ActiveProject: window and folder, agents"]
-    LOC["CE: lint, run configuration, schema"]
+    LSP["HostedLanguageServer: LSP API"]
   end
   subgraph core["core: no IntelliJ imports, plain JUnit"]
     HTTP["PlatformHttp and SessionService"]
     WS["WorkspaceSession: tree, event stream, locks, uploads"]
     SY["ProjectSync and ProjectFolder: three-way sync"]
     GEN[GenerationApi]
-    CE[CeCli]
+    BR["LspBridge: TCP to WebSocket"]
   end
   ide --> core
   HTTP --> P[("DATAMIMIC Platform")]
   WS --> P
   SY --> D[("Local project folders")]
-  CE --> C["datamimic CLI"]
+  BR --> P
 ```
 
 `core` never imports `com.intellij`; a test enforces it.
@@ -73,5 +70,6 @@ flowchart TB
 Manual test against a local platform: start it with `DM_PLATFORM_PUBLIC_URL=http://localhost:3000`, then in the sandbox
 IDE open the DATAMIMIC tool window and sign in with `http://localhost:3000` (exactly the public URL).
 
-Local CE: `python3 -m venv .venv && .venv/bin/pip install "datamimic-ce[mcp]"`, then
-`.venv/bin/datamimic demo create --all --target demos` and open a descriptor.
+Diagnostics: the plugin logs to the IDE log (*Help → Show Log*; in the sandbox
+`.intellijPlatform/sandbox/*/log_runIde/idea.log`) under `#c.r.d.i.l.HostedLanguageServer` (language server) and
+`#c.r.d.i.DatamimicPlatform` (live updates).

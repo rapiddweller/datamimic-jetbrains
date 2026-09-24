@@ -360,7 +360,7 @@ class ProjectSyncTest {
     @Test
     fun `each platform gets its own folder and a taken short name falls back to the full id`() {
         val home = temp.newFolder("home").toPath()
-        val project = PlatformProject("0123456789abcdef", "Customer Data: v2", "project", "2026-09-23")
+        val project = PlatformProject("0123456789abcdef", "Customer Data: v2")
         val origin = PlatformOrigin("https://platform.example.com:8443")
 
         val first = ProjectFolder.locationFor(home, origin, project)
@@ -368,14 +368,6 @@ class ProjectSyncTest {
 
         ProjectFolder(first).writeIdentity(FolderIdentity(origin, "01234567-other", "Other"))
         assertEquals(home.resolve("platform.example.com_8443/Customer Data_ v2-0123456789abcdef"), ProjectFolder.locationFor(home, origin, project))
-    }
-
-    @Test
-    fun `a file belongs to the project folder whose identity is in one of its parents`() {
-        folder.writeIdentity(FolderIdentity(platform.origin, "p1", "P1"))
-
-        assertEquals(folder.root, ProjectFolder.containing(folder.root.resolve("model/datamimic.xml"))?.root)
-        assertNull(ProjectFolder.containing(temp.newFolder("elsewhere").toPath().resolve("datamimic.xml")))
     }
 
     private fun syncNow() = runBlocking { session.sync.syncNow() }

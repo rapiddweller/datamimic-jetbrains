@@ -66,8 +66,6 @@ flowchart LR
   not pass through a link. Names that differ only in case are skipped and reported.
 - **Writes** go to a temporary file in `.datamimic/tmp` and are moved into place, after the base was recorded, so the
   IDE's refresh of a download is recognized as no change.
-- **CE features** (lint, run configuration) stay off inside project folders: their files use the platform's
-  vocabulary.
 
 ## Consequences
 

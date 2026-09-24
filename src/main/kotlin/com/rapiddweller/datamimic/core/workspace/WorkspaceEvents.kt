@@ -6,19 +6,18 @@
 
 package com.rapiddweller.datamimic.core.workspace
 
-import com.rapiddweller.datamimic.core.PlatformHeader
-import com.rapiddweller.datamimic.core.SESSION_COOKIE
 import com.rapiddweller.datamimic.core.SessionService
 import com.rapiddweller.datamimic.core.StoredSession
 import com.rapiddweller.datamimic.core.encode
+import com.rapiddweller.datamimic.core.handshakeStatus
 import com.rapiddweller.datamimic.core.json
+import com.rapiddweller.datamimic.core.openPlatformWebSocket
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
 import java.net.http.HttpClient
 import java.net.http.WebSocket
-import java.net.http.WebSocketHandshakeException
 import java.nio.ByteBuffer
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.Executors
@@ -85,7 +84,17 @@ sealed interface LockProjection {
     ) : LockProjection
 }
 
-enum class StreamState { IDLE, CONNECTING, LIVE, UNAVAILABLE, SUPERSEDED, CLOSED }
+enum class StreamState {
+    IDLE,
+    CONNECTING,
+    LIVE,
+    UNAVAILABLE,
+
+    /** The platform refused the connection (access denied); retrying on its own would only be refused again. */
+    REFUSED,
+    SUPERSEDED,
+    CLOSED,
+}
 
 /**
  * Receive-only workspace event stream of one platform project. Lock state is unknown until the first snapshot,
@@ -100,6 +109,8 @@ class WorkspaceEventStream(
     private val projectId: String,
     private val onEvent: (WorkspaceEvent) -> Unit,
     private val onState: (StreamState) -> Unit,
+    /** Diagnostics for the IDE log: why the stream is not live. */
+    private val log: (String) -> Unit = {},
 ) {
     private val scheduler = Executors.newSingleThreadScheduledExecutor { Thread(it, "DATAMIMIC workspace events").apply { isDaemon = true } }
     private var socket: WebSocket? = null
@@ -111,7 +122,7 @@ class WorkspaceEventStream(
     /** Connects, or reconnects after the stream gave up; a superseded or closed stream stays down. */
     fun start() {
         onScheduler {
-            if (state != StreamState.IDLE && state != StreamState.UNAVAILABLE) return@onScheduler
+            if (state != StreamState.IDLE && state != StreamState.UNAVAILABLE && state != StreamState.REFUSED) return@onScheduler
             attempt = 0
             connect()
         }
@@ -131,24 +142,22 @@ class WorkspaceEventStream(
         if (state == StreamState.CLOSED || state == StreamState.SUPERSEDED) return
         val session = sessions.current() ?: return setState(StreamState.UNAVAILABLE)
         setState(StreamState.CONNECTING)
-        val url = session.origin.webSocketUrl(
-            "/api/v2/projects/${encode(projectId)}/workspace/events?client_binding_id=${encode(clientBindingId)}",
-        )
-        http.newWebSocketBuilder()
-            .header(PlatformHeader.ORIGIN.wireName, session.origin.value)
-            .header(PlatformHeader.COOKIE.wireName, "$SESSION_COOKIE=${session.sessionId}")
-            .header(PlatformHeader.CLIENT_BINDING.wireName, clientBindingId)
-            .buildAsync(url, Listener())
+        val path = "/api/v2/projects/${encode(projectId)}/workspace/events?client_binding_id=${encode(clientBindingId)}"
+        http.openPlatformWebSocket(session, clientBindingId, path, Listener())
             .whenComplete { _, error -> if (error != null) onScheduler { onConnectFailed(session, error) } }
     }
 
     private fun onConnectFailed(session: StoredSession, error: Throwable) {
-        val rejected = generateSequence(error) { it.cause }.filterIsInstance<WebSocketHandshakeException>().firstOrNull()
-        if (rejected?.response?.statusCode() == 401) {
-            setState(StreamState.UNAVAILABLE)
-            sessions.expire(session)
-        } else {
-            scheduleReconnect()
+        val status = error.handshakeStatus()
+        log("Live updates of $projectId did not connect: ${status?.let { "HTTP $it" } ?: error.cause ?: error}")
+        when (status) {
+            UNAUTHORIZED -> {
+                setState(StreamState.UNAVAILABLE)
+                sessions.expire(session)
+            }
+            // WHY: the platform refuses before accepting, which reaches the client as HTTP 403, not a close code.
+            FORBIDDEN -> setState(StreamState.REFUSED)
+            else -> scheduleReconnect()
         }
     }
 
@@ -209,6 +218,7 @@ class WorkspaceEventStream(
     private fun setState(next: StreamState) {
         if (state == next) return
         state = next
+        log("Live updates of $projectId: $next")
         onState(next)
     }
 
@@ -248,6 +258,8 @@ class WorkspaceEventStream(
     }
 
     private companion object {
+        const val UNAUTHORIZED = 401
+        const val FORBIDDEN = 403
         /** Sent by the platform when the same client binding opened a newer stream for this project. */
         const val CLIENT_BINDING_SUPERSEDED = 4001
         val RECONNECT_DELAYS_MS = listOf(250L, 500L, 1_000L, 5_000L, 15_000L)

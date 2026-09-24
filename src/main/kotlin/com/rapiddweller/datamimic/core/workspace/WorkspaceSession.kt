@@ -14,7 +14,7 @@ import java.net.http.HttpClient
 import java.util.concurrent.ConcurrentHashMap
 
 sealed interface WorkspaceUpdate {
-    data class TreeChanged(val tree: WorkspaceTree) : WorkspaceUpdate
+    data object TreeChanged : WorkspaceUpdate
 
     /** Write access or upload state of one file changed. */
     data class FileChanged(val path: String) : WorkspaceUpdate
@@ -52,6 +52,8 @@ class WorkspaceSession(
     clientBindingId: String,
     private val scope: CoroutineScope,
     editor: LocalEditor,
+    /** Diagnostics for the IDE log. */
+    log: (String) -> Unit = {},
 ) {
     private val updatesFlow = MutableSharedFlow<WorkspaceUpdate>(extraBufferCapacity = 256)
     val updates: SharedFlow<WorkspaceUpdate> = updatesFlow
@@ -88,11 +90,19 @@ class WorkspaceSession(
 
     val sync = ProjectSync(folder, projectId, workspace, bases, saver, locks, ::tree, ::loadTree, scope, editor) { updatesFlow.tryEmit(it) }
 
-    private val stream = WorkspaceEventStream(http, sessions, clientBindingId, projectId, ::onEvent) { state ->
-        streamState = state
-        if (state != StreamState.LIVE) locks.onStreamDown()
-        updatesFlow.tryEmit(WorkspaceUpdate.StreamChanged(state))
-    }
+    private val stream = WorkspaceEventStream(
+        http,
+        sessions,
+        clientBindingId,
+        projectId,
+        ::onEvent,
+        onState = { state ->
+            streamState = state
+            if (state != StreamState.LIVE) locks.onStreamDown()
+            updatesFlow.tryEmit(WorkspaceUpdate.StreamChanged(state))
+        },
+        log = log,
+    )
 
     fun start() {
         stream.start()
@@ -119,11 +129,11 @@ class WorkspaceSession(
     // WHY: the sync reads the tree itself; if reading it started another pass, passes would never stop.
     private fun loadTree(): WorkspaceTree = workspace.tree(projectId).also {
         cachedTree = it
-        updatesFlow.tryEmit(WorkspaceUpdate.TreeChanged(it))
+        updatesFlow.tryEmit(WorkspaceUpdate.TreeChanged)
     }
 
     /** Shared from a global project or otherwise not editable on the platform. */
-    fun isReadOnly(path: String): Boolean = cachedTree?.entry(path)?.let { it.readonly || it.source == EntrySource.GLOBAL } ?: false
+    fun isReadOnly(path: String): Boolean = cachedTree?.entry(path)?.isReadOnlyHere ?: false
 
     /** An editor shows the file: take its lease early so typing is not blocked. */
     fun editorShown(path: String) {

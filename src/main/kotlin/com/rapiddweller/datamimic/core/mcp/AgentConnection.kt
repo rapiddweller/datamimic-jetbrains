@@ -7,11 +7,7 @@ package com.rapiddweller.datamimic.core.mcp
 /** Outcome of pointing the agents at a project, for the notification the user sees. */
 class Publication(val server: McpServer?, val connected: List<String>, val failures: List<String>)
 
-/**
- * The active project of one IDE window and the agents pointed at its MCP server. A switch publishes the new project
- * before the old one is left, so agents never point at a project whose token was already revoked. Blocking; call off
- * the UI thread.
- */
+/** The platform project of one IDE window and the agents pointed at its MCP server. Blocking; call off the UI thread. */
 class AgentConnection(
     /** Takes the project's workspace (files, locks, live updates) on the platform. */
     private val activate: (projectId: String) -> Unit,
@@ -25,21 +21,18 @@ class AgentConnection(
 
     private var registered = false
 
+    /** Takes [projectId]'s workspace once, then points the agents at it; again later, e.g. with a renewed token. */
     @Synchronized
-    fun switchTo(projectId: String): Publication {
-        val previous = activeProjectId
-        if (previous != projectId) {
+    fun connect(projectId: String): Publication {
+        check(activeProjectId == null || activeProjectId == projectId) { "A window stays with one platform project." }
+        if (activeProjectId == null) {
             activate(projectId)
             activeProjectId = projectId
         }
-        val publication = publish(projectId)
-        if (previous != null && previous != projectId) deactivate(previous)
-        return publication
+        return publish(projectId)
     }
 
-    /** Registers [projectId] again, e.g. with a renewed token. */
-    @Synchronized
-    fun publish(projectId: String): Publication {
+    private fun publish(projectId: String): Publication {
         val current = try {
             server(projectId)
         } catch (e: Exception) {

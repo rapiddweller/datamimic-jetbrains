@@ -270,7 +270,7 @@ class ProjectSync(
         val remote = remoteFiles(remoteTree)
         // ponytail: hashes every file on each pass; cache by size and mtime once projects hold large data files.
         val local = folder.localFiles().mapValues { sha256(Files.readAllBytes(it.value)) }
-        val steps = reconcile(bases.all(), local, remote.mapValues { it.value.etag!! }, remote.filterValues(::isReadOnly).keys)
+        val steps = reconcile(bases.all(), local, remote.mapValues { it.value.etag!! }, remote.filterValues(TreeEntry::isReadOnlyHere).keys)
         val touched = mutableListOf<Path>()
         val failures = mutableListOf<String>()
         val nowMissing = mutableSetOf<String>()
@@ -427,9 +427,7 @@ class ProjectSync(
 
     private fun isIntended(path: String): Boolean = intents.any { isAtOrUnder(path, it) }
 
-    private fun isReadOnly(path: String): Boolean = tree().entry(path)?.let(::isReadOnly) ?: false
-
-    private fun isReadOnly(entry: TreeEntry): Boolean = entry.readonly || entry.source == EntrySource.GLOBAL
+    private fun isReadOnly(path: String): Boolean = tree().entry(path)?.isReadOnlyHere ?: false
 
     private fun versionOf(path: String): String =
         tree().entry(path)?.etag ?: throw IllegalStateException("The platform returned no version for $path.")

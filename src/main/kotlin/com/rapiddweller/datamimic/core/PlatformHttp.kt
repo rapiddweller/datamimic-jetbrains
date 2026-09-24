@@ -11,9 +11,12 @@ import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.WebSocket
+import java.net.http.WebSocketHandshakeException
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Duration
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 
 internal val json = Json {
     ignoreUnknownKeys = true
@@ -137,6 +140,23 @@ class PlatformHttp(
 
     fun postJson(path: String, body: String): String = send(HttpMethod.POST, path, RequestBody.Json(body)).body
 }
+
+/** Opens a platform WebSocket authenticated like every request: session cookie, exact Origin and client binding. */
+internal fun HttpClient.openPlatformWebSocket(
+    session: StoredSession,
+    clientBindingId: String,
+    pathAndQuery: String,
+    listener: WebSocket.Listener,
+): CompletableFuture<WebSocket> =
+    newWebSocketBuilder()
+        .header(PlatformHeader.ORIGIN.wireName, session.origin.value)
+        .header(PlatformHeader.COOKIE.wireName, "$SESSION_COOKIE=${session.sessionId}")
+        .header(PlatformHeader.CLIENT_BINDING.wireName, clientBindingId)
+        .buildAsync(session.origin.webSocketUrl(pathAndQuery), listener)
+
+/** The HTTP status the platform answered a WebSocket handshake with, when it refused it. */
+internal fun Throwable.handshakeStatus(): Int? =
+    generateSequence(this) { it.cause }.filterIsInstance<WebSocketHandshakeException>().firstOrNull()?.response?.statusCode()
 
 internal fun HttpClient.sendPlatformRequest(
     origin: PlatformOrigin,

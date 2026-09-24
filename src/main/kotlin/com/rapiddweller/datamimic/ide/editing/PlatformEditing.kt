@@ -222,7 +222,9 @@ class PlatformFileBanner : EditorNotificationProvider, DumbAware {
             }
             is FileNotice.LiveUpdatesDown -> EditorNotificationPanel(editor, EditorNotificationPanel.Status.Warning).apply {
                 text(liveUpdatesText(notice.state))
-                if (notice.state == StreamState.UNAVAILABLE) createActionLabel("Reconnect") { synced.session.start() }
+                if (notice.state == StreamState.UNAVAILABLE || notice.state == StreamState.REFUSED) {
+                    createActionLabel("Reconnect") { synced.session.start() }
+                }
             }
         }
 
@@ -242,6 +244,7 @@ class PlatformFileBanner : EditorNotificationProvider, DumbAware {
     private fun liveUpdatesText(state: StreamState): String = when (state) {
         StreamState.SUPERSEDED -> "Live lock updates moved to another connection of this IDE. Reopen the project to see who edits what."
         StreamState.UNAVAILABLE -> "Live lock updates are unavailable. Your changes are kept here and uploaded when possible."
+        StreamState.REFUSED -> "The platform refused live lock updates for this project, so nobody sees that you edit here. Your changes are kept and uploaded when possible."
         StreamState.IDLE, StreamState.CONNECTING, StreamState.LIVE, StreamState.CLOSED -> "Connecting to live lock updates…"
     }
 }

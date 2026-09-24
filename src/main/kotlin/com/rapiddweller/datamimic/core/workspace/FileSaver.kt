@@ -56,10 +56,6 @@ class FileSaver(
     @Synchronized
     fun state(path: String): UploadState = states[path] ?: UploadState.Synced
 
-    /** Saved in the IDE but not on the platform yet. */
-    @Synchronized
-    fun hasUnconfirmedChanges(path: String): Boolean = path in unconfirmed
-
     @Synchronized
     fun unconfirmedPaths(): Set<String> = unconfirmed.keys.toSet()
 

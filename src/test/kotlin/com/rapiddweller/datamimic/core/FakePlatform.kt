@@ -62,6 +62,10 @@ class FakePlatform : AutoCloseable {
     val projectTokens = linkedMapOf<String, Pair<String, String>>()
     private var tokenSerial = 0
 
+    /** Whether the project has its hosted language server turned on. */
+    @Volatile var lspEnabled = true
+    val projectUpdates = CopyOnWriteArrayList<String>()
+
     @Volatile var acquireCount = 0
     @Volatile var uploadsReceived = 0
 
@@ -197,6 +201,19 @@ class FakePlatform : AutoCloseable {
                     exchange.respond(200, """{"path":"x","action":"released"}""")
                 }
             }
+        }
+        authenticated("/api/v2/projects/p1/lsp/init") { exchange ->
+            if (!lspEnabled) return@authenticated exchange.error(403, "LSP_DISABLED", "LSP is disabled for this project")
+            exchange.respond(
+                200,
+                """{"tenant_id":"t1","project_id":"p1","root_uri":"datamimic://project/p1","client_contract":{"text_document_sync":"full"}}""",
+            )
+        }
+        authenticated("/api/v2/projects/p1") { exchange ->
+            if (exchange.requestMethod != "PUT" || exchange.requestURI.path != "/api/v2/projects/p1") return@authenticated exchange.error(404, "NOT_FOUND", "missing")
+            projectUpdates += exchange.body()
+            Regex(""""lsp":\{"enabled":(true|false)\}""").find(projectUpdates.last())?.let { lspEnabled = it.groupValues[1].toBoolean() }
+            exchange.respond(200, """{"identifier":"p1"}""")
         }
         authenticated("/api/v2/projects/p1/project-access-tokens") { exchange ->
             val name = exchange.projectPath("/api/v2/projects/p1/project-access-tokens").removePrefix("/")

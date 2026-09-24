@@ -21,7 +21,6 @@ import com.intellij.platform.ide.progress.withBackgroundProgress
 import com.intellij.ui.SimpleListCellRenderer
 import com.rapiddweller.datamimic.core.PlatformProject
 import com.rapiddweller.datamimic.core.generation.TaskType
-import com.rapiddweller.datamimic.core.generation.run
 import com.rapiddweller.datamimic.core.mcp.MCP_SERVER_NAME
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder

@@ -1,0 +1,7 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <platform.lsp.serverSupportProvider implementation="com.rapiddweller.datamimic.ide.lsp.PlatformLspSupport"/>
+        <postStartupActivity implementation="com.rapiddweller.datamimic.ide.lsp.HostedLanguageServerStartup"/>
+        <statusBarWidgetFactory id="DatamimicLanguageServer" implementation="com.rapiddweller.datamimic.ide.lsp.LspStatusWidgetFactory"/>
+    </extensions>
+</idea-plugin>
