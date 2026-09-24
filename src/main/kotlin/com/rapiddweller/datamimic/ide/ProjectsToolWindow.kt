@@ -121,20 +121,7 @@ internal class ProjectsPanel(private val project: Project) : SimpleToolWindowPan
     }
 
     private fun signIn() {
-        scope.launch(Dispatchers.EDT) {
-            val saved = withContext(Dispatchers.IO) { platform.savedLogin() }
-            val dialog = LoginDialog(project, saved)
-            if (!dialog.showAndGet()) return@launch
-            val input = dialog.input()
-            showMessage(PlatformNode.Message("Signing in…"))
-            try {
-                withContext(Dispatchers.IO) { platform.signIn(input) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                render(AuthState.SignedOut(e.message ?: "Sign-in failed."))
-            }
-        }
+        scope.launch(Dispatchers.EDT) { signInInteractively(project) }
     }
 
     private fun loadProjects() {

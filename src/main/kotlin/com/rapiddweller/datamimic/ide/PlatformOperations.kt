@@ -5,7 +5,6 @@
 package com.rapiddweller.datamimic.ide
 
 import com.intellij.icons.AllIcons
-import com.intellij.ide.impl.ProjectUtil
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -21,8 +20,6 @@ import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 import com.rapiddweller.datamimic.core.PlatformProject
 import com.rapiddweller.datamimic.core.generation.TaskType
 import com.rapiddweller.datamimic.core.mcp.MCP_SERVER_NAME
-import com.rapiddweller.datamimic.core.workspace.FolderIdentity
-import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import com.rapiddweller.datamimic.ide.editing.flushPlatformEdits
 import com.rapiddweller.datamimic.ide.generation.RunResults
 import kotlinx.coroutines.CancellationException
@@ -36,7 +33,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import java.awt.datatransfer.StringSelection
-import java.nio.file.Path
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -45,9 +41,6 @@ import javax.swing.Icon
 internal const val NOTIFICATION_GROUP = "DATAMIMIC"
 
 private val prettyJson = Json { prettyPrint = true }
-
-/** Where platform projects are kept on this computer. */
-private val PROJECTS_HOME: Path = Path.of(System.getProperty("user.home"), "DATAMIMIC")
 
 /** Everything the user can do with a project row of the DATAMIMIC tool window. */
 internal class PlatformOperations(
@@ -71,24 +64,7 @@ internal class PlatformOperations(
         if (node is PlatformNode.ProjectNode) copyAiAssistantConfiguration(node.project)
     }
 
-    /**
-     * Downloads [target] into its folder under [PROJECTS_HOME] and opens that as a normal project in a new window, or
-     * brings its window to the front when it is already open.
-     */
-    fun openProject(target: PlatformProject) = perform("Cannot Open Project") {
-        val origin = (platform.state.value as? AuthState.SignedIn)?.origin ?: return@perform
-        val root = ProjectFolder.locationFor(PROJECTS_HOME, origin, target)
-        if (ProjectUtil.findAndFocusExistingProjectForPath(root) != null) return@perform
-        withBackgroundProgress(project, "Downloading ${target.name}") {
-            withContext(Dispatchers.IO) {
-                val folder = ProjectFolder(root)
-                if (!folder.isProjectFolder()) folder.writeIdentity(FolderIdentity(origin, target.id, target.name))
-                platform.workspace(target.id, folder).sync.syncNow()
-            }
-        }
-        // WHY: the OpenProjectTask builder compiles an internal constructor into the plugin, which newer IDEs removed.
-        ProjectUtil.openOrImport(root, null, true)
-    }
+    fun openProject(target: PlatformProject) = perform("Cannot Open Project") { openPlatformProject(project, target) }
 
     fun signOut() = perform("Sign Out Failed") {
         // WHY: agents, locks and project tokens can only be given back while the session still exists.

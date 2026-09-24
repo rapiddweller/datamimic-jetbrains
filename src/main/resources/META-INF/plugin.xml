@@ -35,6 +35,15 @@
         <postStartupActivity implementation="com.rapiddweller.datamimic.ide.ActiveProjectStartup"/>
     </extensions>
 
+    <actions>
+        <action id="Datamimic.OpenPlatformProject" class="com.rapiddweller.datamimic.ide.OpenPlatformProjectAction"
+                text="Open DATAMIMIC Project…" icon="/icons/datamimic.svg"
+                description="Sign in to your DATAMIMIC Enterprise Platform and open one of its projects in a new window">
+            <add-to-group group-id="WelcomeScreen.QuickStart" anchor="last"/>
+            <add-to-group group-id="FileOpenGroup" anchor="last"/>
+        </action>
+    </actions>
+
     <applicationListeners>
         <listener class="com.rapiddweller.datamimic.ide.ActiveProjectCloser"
                   topic="com.intellij.openapi.project.ProjectCloseListener"/>
