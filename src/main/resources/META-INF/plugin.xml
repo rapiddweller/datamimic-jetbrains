@@ -20,6 +20,16 @@
         </ul>
         ]]></description>
 
+    <change-notes><![CDATA[
+        <p><b>0.1.0</b>: first public version. Requires a DATAMIMIC Enterprise Platform.</p>
+        <ul>
+          <li>Sign in, browse projects, and open a platform project as a synced local project.</li>
+          <li>Edit locks, conflict banners, and live updates from the platform.</li>
+          <li>Completion and checks from the platform's language server, with a status bar switch.</li>
+          <li>Data generation with log and preview; MCP access for IDE agents.</li>
+        </ul>
+        ]]></change-notes>
+
     <depends>com.intellij.modules.platform</depends>
     <!-- The platform's language server needs the IDE's LSP API; without it the rest of the plugin still works. -->
     <depends optional="true" config-file="datamimic-lsp.xml">com.intellij.modules.lsp</depends>

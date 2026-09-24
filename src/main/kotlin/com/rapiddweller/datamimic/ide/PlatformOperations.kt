@@ -5,7 +5,6 @@
 package com.rapiddweller.datamimic.ide
 
 import com.intellij.icons.AllIcons
-import com.intellij.ide.impl.OpenProjectTask
 import com.intellij.ide.impl.ProjectUtil
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -18,7 +17,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.platform.ide.progress.withBackgroundProgress
-import com.intellij.ui.SimpleListCellRenderer
+import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 import com.rapiddweller.datamimic.core.PlatformProject
 import com.rapiddweller.datamimic.core.generation.TaskType
 import com.rapiddweller.datamimic.core.mcp.MCP_SERVER_NAME
@@ -87,7 +86,8 @@ internal class PlatformOperations(
                 platform.workspace(target.id, folder).sync.syncNow()
             }
         }
-        ProjectUtil.openOrImportAsync(root, OpenProjectTask { forceOpenInNewFrame = true; projectName = target.name })
+        // WHY: the OpenProjectTask builder compiles an internal constructor into the plugin, which newer IDEs removed.
+        ProjectUtil.openOrImport(root, null, true)
     }
 
     fun signOut() = perform("Sign Out Failed") {
@@ -121,7 +121,7 @@ internal class PlatformOperations(
         JBPopupFactory.getInstance()
             .createPopupChooserBuilder(TaskType.entries)
             .setTitle("Generate Data for ${target.name}")
-            .setRenderer(SimpleListCellRenderer.create("") { it.label })
+            .setRenderer(textListCellRenderer { it?.label.orEmpty() })
             .setItemChosenCallback { runGeneration(target, it) }
             .createPopup()
             .showInFocusCenter()
