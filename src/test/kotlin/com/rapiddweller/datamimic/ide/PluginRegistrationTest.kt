@@ -4,6 +4,7 @@
 
 package com.rapiddweller.datamimic.ide
 
+import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.roots.impl.DirectoryIndexExcludePolicy
 import com.intellij.openapi.vfs.WritingAccessProvider
 import com.intellij.openapi.wm.StatusBarWidgetFactory
@@ -22,6 +23,7 @@ class PluginRegistrationTest : BasePlatformTestCase() {
         assertTrue(DirectoryIndexExcludePolicy.EP_NAME.getExtensions(project).any { it is ProjectFolderExcludePolicy })
         assertTrue("the optional LSP module loads where the IDE has the LSP API", LspServerSupportProvider.EP_NAME.extensionList.any { it is PlatformLspSupport })
         assertTrue(StatusBarWidgetFactory.EP_NAME.extensionList.any { it is LspStatusWidgetFactory })
+        assertInstanceOf(ActionManager.getInstance().getAction("Datamimic.OpenPlatformProject"), OpenPlatformProjectAction::class.java)
         assertTrue(WritingAccessProvider.EP.getExtensions(project).any { it is PlatformWritingAccess })
         assertTrue(EditorNotificationProvider.EP_NAME.getExtensions(project).any { it is PlatformFileBanner })
     }

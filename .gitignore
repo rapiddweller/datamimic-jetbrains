@@ -3,3 +3,4 @@
 .intellijPlatform
 build
 .kotlin
+.DS_Store
