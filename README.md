@@ -3,6 +3,9 @@
 Work on DATAMIMIC Platform projects in your IDE: synced project folders, edit locks, the platform's language server,
 data generation, and MCP access for IDE agents.
 
+> **Requires a DATAMIMIC Enterprise Platform** and an account on it; the plugin does not work without one. Support for
+> the open-source DATAMIMIC CE is planned.
+>
 > Status: early development, IntelliJ Platform 2025.3+.
 
 ## Features

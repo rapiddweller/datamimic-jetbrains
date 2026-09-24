@@ -6,8 +6,18 @@
     <vendor url="https://datamimic.io">rapiddweller</vendor>
 
     <description><![CDATA[
-        Work on DATAMIMIC Platform projects in your IDE: synced project folders, edit locks, the platform's language
-        server, data generation, and MCP access for IDE agents.
+        <p>Work on DATAMIMIC projects in your JetBrains IDE, connected to your DATAMIMIC Enterprise Platform.</p>
+        <p><b>Requires a DATAMIMIC Enterprise Platform</b> and an account on it. The plugin does not work without one;
+        support for the open-source DATAMIMIC CE is planned.</p>
+        <ul>
+          <li>Sign in with your platform account and browse your projects in the DATAMIMIC tool window.</li>
+          <li>Open a platform project as a normal local project. Files sync both ways, protected by the platform's
+              edit locks; changes on both sides show a conflict banner.</li>
+          <li>Completion and checks from the platform's language server, with a status bar switch to turn it on or
+              off for the project.</li>
+          <li>Generate data on the platform and preview the results.</li>
+          <li>Connect IDE agents to the project's MCP server.</li>
+        </ul>
         ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
