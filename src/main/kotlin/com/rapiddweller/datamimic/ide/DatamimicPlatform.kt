@@ -13,6 +13,7 @@ import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -28,6 +29,9 @@ import com.rapiddweller.datamimic.core.ProjectsApi
 import com.rapiddweller.datamimic.core.SessionExpiredException
 import com.rapiddweller.datamimic.core.SessionService
 import com.rapiddweller.datamimic.core.generation.GenerationApi
+import com.rapiddweller.datamimic.core.lsp.LspApi
+import com.rapiddweller.datamimic.core.lsp.LspBridge
+import com.rapiddweller.datamimic.core.lsp.LspLink
 import com.rapiddweller.datamimic.core.mcp.McpAccess
 import com.rapiddweller.datamimic.core.mcp.McpServer
 import com.rapiddweller.datamimic.core.mcp.ProjectTokensApi
@@ -36,7 +40,6 @@ import com.rapiddweller.datamimic.core.workspace.LocksApi
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import com.rapiddweller.datamimic.core.workspace.WorkspaceApi
 import com.rapiddweller.datamimic.core.workspace.WorkspaceSession
-import com.rapiddweller.datamimic.ide.local.toNioPathOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -92,6 +95,7 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     val projects = ProjectsApi(transport)
     val workspace = WorkspaceApi(transport)
     val generation = GenerationApi(transport)
+    val lsp = LspApi(transport)
     private val locks = LocksApi(transport)
     private val mcpAccess = McpAccess(ProjectTokensApi(transport), ApplicationInfo.getInstance().build.productCode, transport.clientBindingId)
 
@@ -176,7 +180,7 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     @Synchronized
     fun workspace(projectId: String, folder: ProjectFolder): WorkspaceSession = workspaces.getOrPut(projectId) {
         workspacesOrigin = sessions.current()?.origin
-        WorkspaceSession(projectId, folder, workspace, locks, http, sessions, transport.clientBindingId, scope, IdeEditor).also { it.start() }
+        WorkspaceSession(projectId, folder, workspace, locks, http, sessions, transport.clientBindingId, scope, IdeEditor, LOG::info).also { it.start() }
     }
 
     /** An IDE window opened the folder of [projectId]. */
@@ -209,6 +213,10 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
 
     fun mcpRenewalDue(server: McpServer): Instant = mcpAccess.renewalDue(server)
 
+    /** A bridge from the IDE's LSP client to the hosted language server of [projectId]; close it when done. */
+    fun lspBridge(projectId: String, onRejected: () -> Unit, onLink: (LspLink) -> Unit, log: (String) -> Unit): LspBridge =
+        LspBridge(http, sessions, transport.clientBindingId, projectId, onRejected, onLink, log)
+
     @Synchronized
     fun existingWorkspace(projectId: String): WorkspaceSession? = workspaces[projectId]
 
@@ -232,6 +240,7 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     private fun loginCredentials(platformUrl: String) = CredentialAttributes(generateServiceName("DATAMIMIC", "login $platformUrl"))
 
     companion object {
+        private val LOG = logger<DatamimicPlatform>()
         private const val PLATFORM_URL_KEY = "datamimic.platformUrl"
         private const val EMAIL_KEY = "datamimic.email"
         private const val REMEMBER_PASSWORD_KEY = "datamimic.rememberPassword"
@@ -239,6 +248,9 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
         fun getInstance(): DatamimicPlatform = service()
     }
 }
+
+/** The file on disk behind [this], or null for files that are not local (or not mappable, as in light tests). */
+internal fun VirtualFile.toNioPathOrNull(): Path? = if (isInLocalFileSystem) fileSystem.getNioPath(this) else null
 
 /** Tells the sync what the editors hold, so a download never replaces text the user has not saved. */
 private object IdeEditor : LocalEditor {

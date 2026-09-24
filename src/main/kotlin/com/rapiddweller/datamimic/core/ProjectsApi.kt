@@ -14,8 +14,6 @@ import kotlinx.serialization.json.putJsonObject
 data class PlatformProject(
     @SerialName("identifier") val id: String,
     val name: String,
-    val type: String,
-    @SerialName("tc_update") val lastEditedAt: String,
 )
 
 @Serializable

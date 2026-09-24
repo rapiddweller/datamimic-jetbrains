@@ -86,10 +86,6 @@ class ProjectFolder(root: Path) {
         /** Folders and files of the IDE, VCS and agents that live next to the project files but are never synced. */
         private val LOCAL_ONLY_NAMES = setOf(META_DIR, ".idea", ".git", ".junie", ".claude", ".vscode", ".DS_Store")
 
-        /** The project folder [file] belongs to, found by the identity file in one of its parents. */
-        fun containing(file: Path): ProjectFolder? =
-            generateSequence(file.toAbsolutePath().parent) { it.parent }.map(::ProjectFolder).firstOrNull { it.isProjectFolder() }
-
         /** File name endings of IDE module files and of the IDE's safe write (`name.tmp`, then backup `name~`). */
         private val LOCAL_ONLY_SUFFIXES = listOf(".iml", ".tmp", "~")
 

@@ -33,17 +33,16 @@ enum class TaskType(val label: String) {
     @SerialName("infinite") INFINITE("Continuous until stopped"),
 }
 
-/** The generate route's outcome: 0 done, 1 failed, 3 accepted and still running (HTTP 202). */
-enum class GenerateOutcome(val returnCode: Int) {
-    SUCCEEDED(0),
-    FAILED(1),
-    RUNNING(3),
-}
-
 @Serializable
-private data class GenerateResponse(val returncode: Int, val message: String? = null, @SerialName("task_id") val taskId: String)
-
-data class GenerateResult(val outcome: GenerateOutcome, val taskId: String, val message: String?)
+private data class GenerateResponse(val returncode: Int, val message: String? = null, @SerialName("task_id") val taskId: String) {
+    /** The generate route answers 0 done, 1 failed, 3 accepted and still running (HTTP 202); null while it runs. */
+    fun finishedStatus(): TaskStatus? = when (returncode) {
+        0 -> TaskStatus.SUCCESS
+        1 -> TaskStatus.WORKER_FAILURE
+        3 -> null
+        else -> throw IllegalStateException("The platform returned an unknown generation result $returncode.")
+    }
+}
 
 @Serializable
 enum class TaskStatus(val terminal: Boolean, val succeeded: Boolean = false) {
@@ -106,15 +105,25 @@ sealed interface PreviewContent {
 }
 
 class GenerationApi(private val http: PlatformHttp) {
-    fun generate(projectId: String, taskType: TaskType): GenerateResult {
+    /**
+     * Dispatches a run and observes it until the platform reports a terminal status. The platform owns the run:
+     * cancelling the caller only stops observing, and a run still going after [MAX_OBSERVATION_MS] keeps running there.
+     */
+    suspend fun run(projectId: String, taskType: TaskType): RunOutcome {
         val body = buildJsonObject {
             put("timeout", DISPATCH_WAIT_SECONDS)
             put("task_type", json.encodeToJsonElement(TaskType.serializer(), taskType))
         }
         val response = json.decodeFromString<GenerateResponse>(http.postJson("${base(projectId)}/generate", body.toString()))
-        val outcome = GenerateOutcome.entries.firstOrNull { it.returnCode == response.returncode }
-            ?: throw IllegalStateException("The platform returned an unknown generation result ${response.returncode}.")
-        return GenerateResult(outcome, response.taskId, response.message)
+        response.finishedStatus()?.let { return RunOutcome(response.taskId, it, response.message) }
+        var status = TaskStatus.RUNNING
+        var waited = 0L
+        while (!status.terminal && waited < MAX_OBSERVATION_MS) {
+            delay(POLL_INTERVAL_MS)
+            waited += POLL_INTERVAL_MS
+            status = status(projectId, response.taskId)
+        }
+        return RunOutcome(response.taskId, status, response.message)
     }
 
     fun status(projectId: String, taskId: String): TaskStatus {
@@ -172,26 +181,3 @@ data class RunOutcome(val taskId: String, val status: TaskStatus, val message: S
 
 private const val POLL_INTERVAL_MS = 3_000L
 private const val MAX_OBSERVATION_MS = 30 * 60 * 1_000L
-
-/**
- * Dispatches a run and observes it until the platform reports a terminal status. The platform owns the run:
- * cancelling the caller only stops observing, and a run still going after [MAX_OBSERVATION_MS] keeps running there.
- */
-suspend fun GenerationApi.run(projectId: String, taskType: TaskType, onStatus: (TaskStatus) -> Unit = {}): RunOutcome {
-    val result = generate(projectId, taskType)
-    val immediate = when (result.outcome) {
-        GenerateOutcome.SUCCEEDED -> TaskStatus.SUCCESS
-        GenerateOutcome.FAILED -> TaskStatus.WORKER_FAILURE
-        GenerateOutcome.RUNNING -> null
-    }
-    if (immediate != null) return RunOutcome(result.taskId, immediate, result.message)
-    var status = TaskStatus.RUNNING
-    var waited = 0L
-    while (!status.terminal && waited < MAX_OBSERVATION_MS) {
-        delay(POLL_INTERVAL_MS)
-        waited += POLL_INTERVAL_MS
-        status = status(projectId, result.taskId)
-        onStatus(status)
-    }
-    return RunOutcome(result.taskId, status, result.message)
-}

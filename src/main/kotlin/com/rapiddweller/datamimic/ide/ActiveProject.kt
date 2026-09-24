@@ -52,9 +52,10 @@ import java.time.Instant
 @Service(Service.Level.PROJECT)
 class ActiveProject(private val project: Project, private val scope: CoroutineScope) : Disposable {
     private val platform = DatamimicPlatform.getInstance()
-    private val folder: ProjectFolder? = project.basePath?.let { ProjectFolder(Path.of(it)) }?.takeIf { it.isProjectFolder() }
-
     /** Null for a window that is not a DATAMIMIC project folder. */
+    val folder: ProjectFolder? = project.basePath?.let { ProjectFolder(Path.of(it)) }?.takeIf { it.isProjectFolder() }
+
+    /** Which platform project [folder] is a copy of. */
     val identity: FolderIdentity? = folder?.identity()
 
     private val connection = AgentConnection(
@@ -106,7 +107,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
 
     private suspend fun connect(target: FolderIdentity) {
         renewal?.cancel()
-        val publication = withContext(Dispatchers.IO) { connection.switchTo(target.projectId) }
+        val publication = withContext(Dispatchers.IO) { connection.connect(target.projectId) }
         session()?.let(::watch)
         report(target, publication)
         val server = publication.server ?: return
@@ -124,7 +125,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
                 when (update) {
                     is WorkspaceUpdate.MissingLocally -> showMissing(session, update.paths)
                     is WorkspaceUpdate.SyncProblem -> notify(update.message, NotificationType.WARNING)
-                    is WorkspaceUpdate.FileChanged, is WorkspaceUpdate.StreamChanged, is WorkspaceUpdate.TreeChanged ->
+                    is WorkspaceUpdate.FileChanged, is WorkspaceUpdate.StreamChanged, WorkspaceUpdate.TreeChanged ->
                         project.service<PlatformEditors>().refreshBanners()
                 }
             }

@@ -96,7 +96,7 @@ class WorkspaceTest {
 
         val state = saver.state(PATH)
         assertTrue(state is UploadState.Failed && state.failure == UploadFailure.CONCURRENT_CHANGE)
-        assertTrue(saver.hasUnconfirmedChanges(PATH))
+        assertTrue(PATH in saver.unconfirmedPaths())
         assertEquals("<setup other='1'/>", platform.files.getValue(PATH).first)
     }
 
@@ -109,7 +109,7 @@ class WorkspaceTest {
         awaitIdle()
         val failed = saver.state(PATH)
         assertTrue(failed is UploadState.Failed && failed.failure == UploadFailure.SESSION_ENDED)
-        assertTrue(saver.hasUnconfirmedChanges(PATH))
+        assertTrue(PATH in saver.unconfirmedPaths())
 
         sessions.login(platform.origin, "ada@example.com", "secret")
         saver.retry(PATH)
@@ -158,7 +158,7 @@ class WorkspaceTest {
         awaitUntil { !session.saver.isUploading() }
         val failed = session.saver.state(PATH)
         assertTrue(failed is UploadState.Failed && failed.message.startsWith("Saved, but"))
-        assertFalse("the bytes are on the platform", session.saver.hasUnconfirmedChanges(PATH))
+        assertFalse("the bytes are on the platform", PATH in session.saver.unconfirmedPaths())
         assertEquals("the lease is kept while the version is unknown", "binding-1", platform.lockOwner)
 
         session.editorHidden(PATH, unsavedEdits = false)
@@ -254,25 +254,6 @@ class WorkspaceTest {
     }
 
     @Test
-    fun `tree lists direct children with implicit folders, hidden entries dropped, folders first`() {
-        val tree = WorkspaceTree(
-            "p1",
-            "r1",
-            listOf(
-                entry("z.xml"),
-                entry("conf/base.properties"),
-                entry("data/people.ent.csv"),
-                entry("data", EntryKind.DIRECTORY),
-                entry("secret.txt", hidden = true),
-            ),
-        )
-
-        assertEquals(listOf("conf", "data", "z.xml"), tree.children(null).map { it.ref.path })
-        assertFalse("implicit folders have no entry", tree.children(null).first().entry != null)
-        assertEquals(listOf("data/people.ent.csv"), tree.children("data").map { it.ref.path })
-    }
-
-    @Test
     fun `document refs reject paths that escape the project`() {
         for (bad in listOf("../x", "a//b", "/abs", "a/./b", "a\\b")) {
             assertTrue(bad, runCatching { DocumentRef("p1", bad) }.isFailure)
@@ -286,12 +267,8 @@ class WorkspaceTest {
         while (!condition() && System.currentTimeMillis() < deadline) Thread.sleep(10)
     }
 
-
     private fun held(relation: OwnerRelation, generation: String, owner: String? = null) =
         LockProjection.Held(ownerName = owner, ownerRelation = relation, lockGeneration = generation, renewAfterSeconds = 100)
-
-    private fun entry(path: String, kind: EntryKind = EntryKind.FILE, hidden: Boolean = false) =
-        TreeEntry(path, kind, EntrySource.CURRENT, hidden = hidden, etag = "e")
 
     private companion object {
         const val PATH = "model/datamimic.xml"

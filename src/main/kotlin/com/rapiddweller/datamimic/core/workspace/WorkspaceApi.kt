@@ -13,8 +13,6 @@ import com.rapiddweller.datamimic.core.encodePath
 import com.rapiddweller.datamimic.core.json
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import java.util.Base64
 
 /** A path inside one platform project. Rejects anything that could escape or alias the project root. */
@@ -31,10 +29,6 @@ data class DocumentRef(val projectId: String, val path: String) {
     }
 
     val name: String get() = path.substringAfterLast('/')
-
-    val parentPath: String? get() = path.substringBeforeLast('/', "").ifEmpty { null }
-
-    fun child(name: String): DocumentRef = DocumentRef(projectId, parentPath?.let { "$it/$name" } ?: name)
 }
 
 @Serializable
@@ -57,12 +51,13 @@ data class TreeEntry(
     val path: String,
     val kind: EntryKind,
     val source: EntrySource,
-    @SerialName("source_project_name") val sourceProjectName: String? = null,
     val hidden: Boolean = false,
     val readonly: Boolean = false,
-    val size: Long? = null,
     val etag: String? = null,
-)
+) {
+    /** Shared from a global project or otherwise not editable on the platform. */
+    val isReadOnlyHere: Boolean get() = readonly || source == EntrySource.GLOBAL
+}
 
 @Serializable
 data class WorkspaceTree(
@@ -72,12 +67,6 @@ data class WorkspaceTree(
 ) {
     fun entry(path: String): TreeEntry? = entries.firstOrNull { it.path == path }
 }
-
-@Serializable
-data class FileTemplate(val label: String, val extension: String)
-
-@Serializable
-private data class TemplateList(val templates: List<FileTemplate>)
 
 class FileContent(val bytes: ByteArray, val etag: String?)
 
@@ -142,26 +131,6 @@ class WorkspaceApi(private val http: PlatformHttp) {
         http.send(HttpMethod.POST, "${base(from.projectId)}/entries/move", RequestBody.Json(moveBody(from, to, EntryKind.DIRECTORY)))
     }
 
-    fun templates(projectId: String): List<FileTemplate> =
-        json.decodeFromString<TemplateList>(http.getJson("${base(projectId)}/templates")).templates
-
-    /** @param directory project-relative directory, or null for the project root. */
-    fun createFromTemplate(projectId: String, directory: String?, fileName: String, template: FileTemplate): DocumentRef {
-        val ref = DocumentRef(projectId, listOfNotNull(directory, fileName + template.extension).joinToString("/"))
-        val body = buildJsonObject {
-            put("file_extension", template.extension)
-            put("file_name", fileName)
-            put("file_dir", directory.orEmpty())
-        }
-        http.send(
-            HttpMethod.POST,
-            "${base(projectId)}/files/from-template",
-            RequestBody.Json(body.toString()),
-            mapOf(PlatformHeader.IF_NONE_MATCH to "*"),
-        )
-        return ref
-    }
-
     private fun moveBody(from: DocumentRef, to: DocumentRef, kind: EntryKind): String = json.encodeToString(
         MoveRequest.serializer(),
         MoveRequest(from.path, to.path, kind),
@@ -176,24 +145,3 @@ private data class MoveRequest(
     @SerialName("destination_path") val destinationPath: String,
     val kind: EntryKind,
 )
-
-/** One row of a project's file tree; directories that only exist implicitly (as parents of files) have no [entry]. */
-data class TreeItem(val ref: DocumentRef, val kind: EntryKind, val entry: TreeEntry?)
-
-/** Direct visible children of [parent] (null for the project root), directories first, then by name. */
-fun WorkspaceTree.children(parent: String?): List<TreeItem> {
-    val prefix = parent?.let { "$it/" } ?: ""
-    val visible = entries.filter { !it.hidden && it.path.startsWith(prefix) && it.path.length > prefix.length }
-    val items = linkedMapOf<String, TreeItem>()
-    for (entry in visible) {
-        val rest = entry.path.removePrefix(prefix)
-        val name = rest.substringBefore('/')
-        val isDirectChild = '/' !in rest
-        val path = prefix + name
-        when {
-            isDirectChild -> items[path] = TreeItem(DocumentRef(projectId, path), entry.kind, entry)
-            path !in items -> items[path] = TreeItem(DocumentRef(projectId, path), EntryKind.DIRECTORY, null)
-        }
-    }
-    return items.values.sortedWith(compareBy<TreeItem> { it.kind != EntryKind.DIRECTORY }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.ref.name })
-}

@@ -33,26 +33,24 @@ class AgentConnectionTest {
     )
 
     @Test
-    fun `a switch publishes the new project before it leaves the old one`() {
-        connection.switchTo("A")
-        events.clear()
+    fun `the workspace is taken once, and connecting again only registers the agents again`() {
+        connection.connect("A")
+        connection.connect("A")
 
-        connection.switchTo("B")
-
-        assertEquals(listOf("activate B", "register B", "deactivate A"), events)
-        assertEquals("B", connection.activeProjectId)
+        assertEquals(listOf("activate A", "register A", "register A"), events)
+        assertEquals("A", connection.activeProjectId)
     }
 
     @Test
-    fun `when the new project cannot be published, no agent keeps pointing at the old one`() {
-        connection.switchTo("A")
+    fun `when a renewed token cannot be created, no agent keeps pointing at the old one`() {
+        connection.connect("A")
         events.clear()
-        failingProjects += "B"
+        failingProjects += "A"
 
-        val publication = connection.switchTo("B")
+        val publication = connection.connect("A")
 
-        assertEquals(listOf("activate B", "unregister", "deactivate A"), events)
-        assertEquals(listOf("Project token: no token for B"), publication.failures)
+        assertEquals(listOf("unregister"), events)
+        assertEquals(listOf("Project token: no token for A"), publication.failures)
     }
 
     @Test
@@ -65,7 +63,7 @@ class AgentConnectionTest {
 
     @Test
     fun `leaving disconnects the agents before the workspace is given back`() {
-        connection.switchTo("A")
+        connection.connect("A")
         events.clear()
 
         connection.leave()
