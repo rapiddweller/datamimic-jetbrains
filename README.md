@@ -67,6 +67,11 @@ flowchart TB
 | Run an IDE with the plugin | `./gradlew runIde` (debug via the run configuration in `.run/`) |
 | Package | `./gradlew buildPlugin` |
 
+CI (`.github/workflows/build.yml`) tests and builds every push and pull request; the plugin ZIP is attached to each run.
+Releasing: add the version's section `## [<version>]` to `CHANGELOG.md`, then push the tag `v<version>`. The tag is the
+plugin version (local builds are `0.0.0-dev`); the tag run also checks compatibility with the Plugin Verifier and
+publishes a GitHub release with the ZIP and that CHANGELOG section.
+
 Manual test against a local platform: start it with `DM_PLATFORM_PUBLIC_URL=http://localhost:3000`, then in the sandbox
 IDE open the DATAMIMIC tool window and sign in with `http://localhost:3000` (exactly the public URL).
 

@@ -10,6 +10,11 @@ plugins {
     id("org.jetbrains.intellij.platform")
 }
 
+// WHY: IntelliJ Platform 2025.3 runs on Java 21; the same JDK locally and on CI gives the same build.
+kotlin {
+    jvmToolchain(21)
+}
+
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
 dependencies {
     testImplementation(libs.junit)

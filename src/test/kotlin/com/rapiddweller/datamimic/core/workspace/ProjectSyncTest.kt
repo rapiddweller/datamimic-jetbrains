@@ -178,7 +178,8 @@ class ProjectSyncTest {
         Files.delete(file(PATH))
 
         session.sync.deleted(PATH)
-        awaitUntil { PATH !in platform.files }
+        // WHY: the base is dropped after the platform answered, a moment after the fake removed the file.
+        awaitUntil { PATH !in platform.files && session.bases.get(PATH) == null }
 
         assertEquals(listOf(PATH), platform.deletes)
         assertNull(session.bases.get(PATH))
@@ -209,7 +210,7 @@ class ProjectSyncTest {
         folder.root.resolve("data").toFile().deleteRecursively()
 
         session.sync.deleted("data")
-        awaitUntil { "data/a.csv" !in platform.files && "data/b.csv" !in platform.files }
+        awaitUntil { "data/a.csv" !in platform.files && "data/b.csv" !in platform.files && session.bases.get("data/a.csv") == null }
 
         assertEquals(setOf("data/a.csv", "data/b.csv"), platform.deletes.toSet())
         assertTrue(PATH in platform.files)
