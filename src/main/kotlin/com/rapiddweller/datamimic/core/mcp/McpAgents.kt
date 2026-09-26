@@ -62,7 +62,7 @@ class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : Mcp
         if (git.isTracked(CONFIG_PATH)) {
             throw McpAgentException("Junie: $CONFIG_PATH is tracked by Git, so the DATAMIMIC token is not written into it.")
         }
-        git.exclude(CONFIG_PATH)
+        if (projectDir.resolve(".git").exists()) git.exclude(CONFIG_PATH) else excludeBeforeGitInit()
         val entry = buildJsonObject {
             put("url", server.url)
             putJsonObject("headers") { server.headers.forEach { (name, value) -> put(name, value) } }
@@ -87,6 +87,15 @@ class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : Mcp
             return
         }
         writeSecretFile(configFile, JsonObject(others + (SERVERS_KEY to JsonObject(servers))).toString())
+    }
+
+    private fun excludeBeforeGitInit() {
+        val ignore = projectDir.resolve(".junie/.gitignore")
+        val pattern = "/mcp/mcp.json"
+        val current = if (ignore.exists()) ignore.readText() else ""
+        if (current.lines().any { it.trim() == pattern }) return
+        Files.createDirectories(ignore.parent)
+        Files.writeString(ignore, current + (if (current.isEmpty() || current.endsWith("\n")) "" else "\n") + pattern + "\n")
     }
 
     private companion object {
