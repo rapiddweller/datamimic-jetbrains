@@ -68,13 +68,7 @@ class SyncedFile(val session: WorkspaceSession, val path: String)
  */
 @Service(Service.Level.APP)
 class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
-    // WHY: a bare JDK client ignores the IDE proxy and trusted certificates, which breaks corporate networks.
-    private val http: HttpClient = HttpClient.newBuilder()
-        .proxy(JdkProxyProvider.getInstance().proxySelector)
-        .authenticator(JdkProxyProvider.getInstance().authenticator)
-        .sslContext(CertificateManager.getInstance().sslContext)
-        .connectTimeout(Duration.ofSeconds(15))
-        .build()
+    private val http = platformHttpClient()
 
     // WHY: scoped per IDE product so two installed IDEs never overwrite each other's session.
     private val credentials = CredentialAttributes(
@@ -248,6 +242,14 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
         fun getInstance(): DatamimicPlatform = service()
     }
 }
+
+/** The IDE's proxy routing and trusted certificates, without treating platform 401s as JDK auth challenges. */
+// ponytail: authenticated proxies (407) stay unsupported; add proxy-only authentication when a customer requires it.
+internal fun platformHttpClient(): HttpClient = HttpClient.newBuilder()
+    .proxy(JdkProxyProvider.getInstance().proxySelector)
+    .sslContext(CertificateManager.getInstance().sslContext)
+    .connectTimeout(Duration.ofSeconds(15))
+    .build()
 
 /** The file on disk behind [this], or null for files that are not local (or not mappable, as in light tests). */
 internal fun VirtualFile.toNioPathOrNull(): Path? = if (isInLocalFileSystem) fileSystem.getNioPath(this) else null
