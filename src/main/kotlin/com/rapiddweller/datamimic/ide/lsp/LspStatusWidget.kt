@@ -10,7 +10,6 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.EDT
-import com.intellij.openapi.components.service
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -42,7 +41,7 @@ class LspStatusWidgetFactory : StatusBarWidgetFactory {
 /** Status text plus a menu to turn the server on or off for the project, or to ask the platform again. */
 private class LspStatusWidget(private val project: Project, private val scope: CoroutineScope) :
     StatusBarWidget, StatusBarWidget.TextPresentation {
-    private val server = project.service<HostedLanguageServer>()
+    private val server = project.getService(HostedLanguageServer::class.java)
 
     override fun ID(): String = WIDGET_ID
 

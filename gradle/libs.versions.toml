@@ -1,5 +1,8 @@
 [versions]
 junit = "4.13.2"
+serialization = "1.6.0"
 
 [libraries]
 junit = { module = "junit:junit", version.ref = "junit" }
+serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm", version.ref = "serialization" }
+serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm", version.ref = "serialization" }

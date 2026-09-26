@@ -11,7 +11,6 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
 import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectCloseListener
@@ -126,7 +125,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
                     is WorkspaceUpdate.MissingLocally -> showMissing(session, update.paths)
                     is WorkspaceUpdate.SyncProblem -> notify(update.message, NotificationType.WARNING)
                     is WorkspaceUpdate.FileChanged, is WorkspaceUpdate.StreamChanged, WorkspaceUpdate.TreeChanged ->
-                        project.service<PlatformEditors>().refreshBanners()
+                        project.getService(PlatformEditors::class.java).refreshBanners()
                 }
             }
         }
@@ -212,7 +211,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     }
 }
 
-internal fun Project.activeProject(): ActiveProject = service()
+internal fun Project.activeProject(): ActiveProject = getService(ActiveProject::class.java)
 
 /** Every connected IDE window, so signing out can disconnect them while the session still exists. */
 internal suspend fun disconnectAllWindowsForSignOut() {

@@ -6,7 +6,6 @@ package com.rapiddweller.datamimic.ide.editing
 
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
 import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditor
@@ -194,7 +193,7 @@ class PlatformFileBanner : EditorNotificationProvider, DumbAware {
             }
         }
         val notice = synced.session.notice(synced.path) ?: return null
-        val editors = project.service<PlatformEditors>()
+        val editors = project.getService(PlatformEditors::class.java)
         return Function { editor -> panel(editor, notice, file, synced, editors) }
     }
 
