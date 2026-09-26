@@ -16,15 +16,31 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.io.IOException
 import java.net.http.HttpClient
 import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.system.exitProcess
+
+internal object FolderClaimProbe {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        try {
+            ProjectFolder(Path.of(args.single())).claimForSync().close()
+        } catch (_: FolderClaimException) {
+            exitProcess(1)
+        }
+    }
+}
 
 class WorkspaceTest {
     private val platform = FakePlatform()
@@ -88,6 +104,54 @@ class WorkspaceTest {
         assertEquals("<setup a='1'/>" to "etag-2", platform.files[PATH])
         assertEquals(Triple(PATH, "etag-1", "1"), platform.uploads.single())
         assertEquals(FileBase("etag-2", sha256("<setup a='1'/>".toByteArray())), bases.get(PATH))
+    }
+
+    @Test
+    fun `a folder claim keeps child JVMs blocked after a rejected same JVM claim`() {
+        val claim = folder.claimForSync()
+        try {
+            assertFalse(".datamimic/sync.lock" in folder.localFiles())
+            assertEquals(1, childClaim(folder.root))
+            assertThrows(FolderInUseException::class.java) { ProjectFolder(folder.root).claimForSync() }
+            assertEquals(1, childClaim(folder.root))
+        } finally {
+            claim.close()
+        }
+
+        assertEquals(0, childClaim(folder.root))
+    }
+
+    @Test
+    fun `a folder claim acquisition failure fails closed`() {
+        Files.writeString(folder.root.resolve(ProjectFolder.META_DIR), "not a directory")
+
+        val failure = assertThrows(FolderClaimFailedException::class.java) { folder.claimForSync() }
+
+        assertTrue(failure.cause is IOException)
+    }
+
+    @Test
+    fun `metadata and lock symlinks fail closed without touching their targets`() {
+        val outside = temp.newFolder("outside").toPath()
+        val metadataLink = folder.root.resolve(ProjectFolder.META_DIR)
+        val metadataLinked = runCatching { Files.createSymbolicLink(metadataLink, outside); true }.getOrDefault(false)
+        assumeTrue("file system supports symbolic links", metadataLinked)
+
+        assertThrows(FolderClaimFailedException::class.java) { folder.claimForSync() }
+        assertFalse(Files.exists(outside.resolve("sync.lock")))
+
+        val other = ProjectFolder(temp.newFolder("other").toPath())
+        Files.createDirectories(other.root.resolve(ProjectFolder.META_DIR))
+        val lockTarget = outside.resolve("lock-target")
+        Files.writeString(lockTarget, "outside")
+        val lockLinked = runCatching {
+            Files.createSymbolicLink(other.root.resolve(ProjectFolder.META_DIR).resolve("sync.lock"), lockTarget)
+            true
+        }.getOrDefault(false)
+        assumeTrue("file system supports symbolic links", lockLinked)
+
+        assertThrows(FolderClaimFailedException::class.java) { other.claimForSync() }
+        assertEquals("outside", Files.readString(lockTarget))
     }
 
     @Test
@@ -470,6 +534,24 @@ class WorkspaceTest {
     }
 
     private fun awaitIdle() = awaitUntil { !saver.isUploading() }
+
+    private fun childClaim(path: Path): Int {
+        val java = Path.of(System.getProperty("java.home"), "bin", "java").toString()
+        val arguments = Files.createTempFile("datamimic-claim-probe-", ".args")
+        try {
+            Files.writeString(
+                arguments,
+                listOf("-cp", System.getProperty("java.class.path"), FolderClaimProbe::class.java.name, path.toString()).joinToString("\n", transform = ::argFileValue),
+            )
+            val child = ProcessBuilder(java, "@$arguments").start()
+            check(child.waitFor(5, TimeUnit.SECONDS)) { "Claim probe did not finish." }
+            return child.exitValue()
+        } finally {
+            Files.deleteIfExists(arguments)
+        }
+    }
+
+    private fun argFileValue(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
     private fun awaitUntil(condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + 5_000

@@ -37,6 +37,7 @@ import com.rapiddweller.datamimic.core.mcp.McpServer
 import com.rapiddweller.datamimic.core.mcp.ProjectTokensApi
 import com.rapiddweller.datamimic.core.workspace.LocalEditor
 import com.rapiddweller.datamimic.core.workspace.LocksApi
+import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import com.rapiddweller.datamimic.core.workspace.WorkspaceApi
 import com.rapiddweller.datamimic.core.workspace.WorkspaceSession
@@ -70,18 +71,31 @@ class SyncedFile(val session: WorkspaceSession, val path: String)
 
 /** Keeps a closing session visible until its own shutdown completion says it is safe to replace. */
 internal class WorkspaceRegistry<T> {
-    internal class Entry<T>(val value: T, val origin: PlatformOrigin?, var shutdown: Deferred<Unit>? = null, var finalization: Deferred<Unit>? = null)
+    internal class Entry<T>(
+        val value: T,
+        val origin: PlatformOrigin?,
+        val claim: AutoCloseable? = null,
+        var shutdown: Deferred<Unit>? = null,
+        var finalization: Deferred<Unit>? = null,
+    )
 
     private val entries = mutableMapOf<String, Entry<T>>()
     private var admitting = true
     private var disposed = false
 
     @Synchronized
-    fun getOrCreate(projectId: String, origin: PlatformOrigin?, create: () -> T): T {
+    fun getOrCreate(projectId: String, origin: PlatformOrigin?, claim: (() -> AutoCloseable)? = null, create: () -> T): T {
         check(admitting) { "DATAMIMIC is shutting down." }
         val entry = entries[projectId]
         check(entry?.shutdown == null) { "Workspace session is closing." }
-        return entry?.value ?: create().also { entries[projectId] = Entry(it, origin) }
+        if (entry != null) return entry.value
+        val heldClaim = claim?.invoke()
+        return try {
+            create().also { entries[projectId] = Entry(it, origin, heldClaim) }
+        } catch (e: Throwable) {
+            runCatching { heldClaim?.close() }
+            throw e
+        }
     }
 
     @Synchronized
@@ -119,7 +133,11 @@ internal class WorkspaceRegistry<T> {
     fun values(): List<T> = entries.values.map(Entry<T>::value)
 
     @Synchronized
-    fun remove(projectId: String, entry: Entry<T>): Boolean = entries.remove(projectId, entry)
+    fun remove(projectId: String, entry: Entry<T>): Boolean {
+        if (entries[projectId] != entry) return false
+        entry.claim?.close()
+        return entries.remove(projectId, entry)
+    }
 }
 
 /**
@@ -260,14 +278,15 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     }
 
     /** The session that syncs [projectId] with [folder], started on first use. */
-    fun workspace(projectId: String, folder: ProjectFolder): WorkspaceSession = synchronized(this) {
-        workspaceLocked(projectId, folder)
+    fun workspace(projectId: String, folder: ProjectFolder, initialIdentity: FolderIdentity? = null): WorkspaceSession = synchronized(this) {
+        workspaceLocked(projectId, folder, initialIdentity)
     }
 
-    private fun workspaceLocked(projectId: String, folder: ProjectFolder): WorkspaceSession {
-        return workspaces.getOrCreate(projectId, sessions.current()?.origin) {
-        workspacesOrigin = sessions.current()?.origin
-        WorkspaceSession(projectId, folder, workspace, locks, http, sessions, transport.clientBindingId, scope, IdeEditor, LOG::info).also { it.start() }
+    private fun workspaceLocked(projectId: String, folder: ProjectFolder, initialIdentity: FolderIdentity? = null): WorkspaceSession {
+        return workspaces.getOrCreate(projectId, sessions.current()?.origin, folder::claimForSync) {
+            workspacesOrigin = sessions.current()?.origin
+            initialIdentity?.let(folder::initializeIdentity)
+            WorkspaceSession(projectId, folder, workspace, locks, http, sessions, transport.clientBindingId, scope, IdeEditor, LOG::info).also { it.start() }
         }
     }
 

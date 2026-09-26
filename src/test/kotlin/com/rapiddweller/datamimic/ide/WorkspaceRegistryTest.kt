@@ -4,16 +4,26 @@
 
 package com.rapiddweller.datamimic.ide
 
+import com.rapiddweller.datamimic.core.PlatformOrigin
+import com.rapiddweller.datamimic.core.workspace.FolderIdentity
+import com.rapiddweller.datamimic.core.workspace.FolderInUseException
+import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class WorkspaceRegistryTest {
+    @get:Rule
+    val temp = TemporaryFolder()
+
     @Test
     fun `a timeout leaves a closing workspace owned until its shared drain finishes`() = runBlocking {
         val registry = WorkspaceRegistry<Any>()
@@ -51,5 +61,55 @@ class WorkspaceRegistryTest {
         registry.closeAdmissionPermanently()
         registry.reopenAdmission()
         assertThrows(IllegalStateException::class.java) { registry.getOrCreate("p2", null) { Any() } }
+    }
+
+    @Test
+    fun `a folder claim remains held until the gated finalization removes its entry`() = runBlocking {
+        val registry = WorkspaceRegistry<Any>()
+        var released = false
+        registry.getOrCreate("p1", null, { AutoCloseable { released = true } }) { Any() }
+        val drain = CompletableDeferred<Unit>()
+        val finalized = CompletableDeferred<Unit>()
+        val entry = checkNotNull(registry.beginShutdown("p1", { drain }, { finalized }))
+
+        drain.complete(Unit)
+        assertFalse(released)
+        finalized.complete(Unit)
+        assertFalse(released)
+
+        assertTrue(registry.remove("p1", entry))
+        assertTrue(released)
+    }
+
+    @Test
+    fun `a failed workspace construction releases its claim`() {
+        val registry = WorkspaceRegistry<Any>()
+        var released = false
+
+        assertThrows(IllegalStateException::class.java) {
+            registry.getOrCreate("p1", null, { AutoCloseable { released = true } }) { error("construction failed") }
+        }
+
+        assertTrue(released)
+    }
+
+    @Test
+    fun `identity initialization runs only after the folder claim`() {
+        val folder = ProjectFolder(temp.newFolder("project").toPath())
+        val registry = WorkspaceRegistry<Any>()
+        val origin = PlatformOrigin("https://platform.example.com")
+        var initialized = false
+        registry.getOrCreate("p1", origin, folder::claimForSync) {
+            assertThrows(FolderInUseException::class.java) { ProjectFolder(folder.root).claimForSync() }
+            folder.initializeIdentity(FolderIdentity(origin, "p1", "Project"))
+            initialized = true
+            Any()
+        }
+
+        assertTrue(initialized)
+        assertEquals("p1", folder.identity()?.projectId)
+        val done = CompletableDeferred(Unit)
+        val entry = checkNotNull(registry.beginShutdown("p1", { done }, { done }))
+        assertTrue(registry.remove("p1", entry))
     }
 }
