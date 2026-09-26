@@ -220,14 +220,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     /** IDE agents of this window that can be connected automatically. */
     private fun agents(): List<McpAgent> {
         val projectDir = folder?.root ?: return emptyList()
-        val path = EnvironmentUtil.getValue("PATH")
-        return buildList {
-            findOnPath("claude", path)?.let { add(ClaudeCodeAgent(it, projectDir)) }
-            // WHY: Junie keeps its state in ~/.junie; without it Junie is not in use and gets no token on disk.
-            if (Files.isDirectory(Path.of(System.getProperty("user.home"), ".junie"))) {
-                add(JunieAgent(projectDir, GitIgnore(projectDir, findOnPath("git", path))))
-            }
-        }
+        return discoverAgents(projectDir, EnvironmentUtil.getValue("PATH"), Path.of(System.getProperty("user.home")))
     }
 
     private fun group() = NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
@@ -247,6 +240,15 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
 }
 
 internal fun Project.activeProject(): ActiveProject = getService(ActiveProject::class.java)
+
+/** Discovers agents from the actual user environment; callers provide paths so startup behavior is testable. */
+internal fun discoverAgents(projectDir: Path, path: String?, userHome: Path): List<McpAgent> = buildList {
+    findOnPath("claude", path)?.let { add(ClaudeCodeAgent(it, projectDir)) }
+    // WHY: Junie keeps its state in ~/.junie; without it Junie is not in use and gets no token on disk.
+    if (Files.isDirectory(userHome.resolve(".junie"))) {
+        add(JunieAgent(projectDir, GitIgnore(projectDir, findOnPath("git", path))))
+    }
+}
 
 /** Every connected IDE window, so signing out can disconnect them while the session still exists. */
 internal suspend fun disconnectAllWindowsForSignOut() {
