@@ -8,6 +8,7 @@ import com.rapiddweller.datamimic.core.FakePlatform
 import com.rapiddweller.datamimic.core.PlatformHttp
 import com.rapiddweller.datamimic.core.SessionService
 import com.rapiddweller.datamimic.core.json
+import com.rapiddweller.datamimic.core.process.runCommand
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
@@ -17,6 +18,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeFalse
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -24,6 +26,7 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.net.http.HttpClient
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.time.Clock
 import java.time.Duration
@@ -176,9 +179,62 @@ class McpTest {
     }
 
     @Test
+    fun `junie rejects a tracked config in a parent git work tree`() {
+        assumeTrue("Git is available", gitAvailable())
+        val repository = temp.newFolder("repository")
+        git(repository, "init")
+        val projectDir = File(repository, "nested/project").apply { mkdirs() }
+        val config = File(projectDir, ".junie/mcp/mcp.json").apply {
+            parentFile.mkdirs()
+            writeText("{\"mcpServers\":{}}")
+        }
+        git(repository, "add", "nested/project/.junie/mcp/mcp.json")
+
+        val error = assertThrows(McpAgentException::class.java) {
+            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), Path.of("git"))).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+        }
+
+        assertTrue(error.message!!.contains("tracked by Git"))
+        assertEquals("{\"mcpServers\":{}}", config.readText())
+    }
+
+    @Test
+    fun `junie accepts an untracked config in a parent git work tree`() {
+        assumeTrue("Git is available", gitAvailable())
+        val repository = temp.newFolder("untracked-repository")
+        git(repository, "init")
+        val projectDir = File(repository, "nested/project").apply { mkdirs() }
+
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), Path.of("git"))).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+
+        assertTrue(File(projectDir, ".junie/mcp/mcp.json").exists())
+        assertEquals(listOf("/mcp/mcp.json"), File(projectDir, ".junie/.gitignore").readLines())
+    }
+
+    @Test
+    fun `junie fails closed when git cannot answer its tracking query`() {
+        val projectDir = temp.newFolder("broken-git").apply {
+            File(this, ".git").mkdirs()
+            File(this, ".git/HEAD").writeText("ref: refs/heads/main\n")
+        }
+        val git = script("git", "echo 'index unavailable' >&2; exit 2")
+
+        val error = assertThrows(McpAgentException::class.java) {
+            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git.toPath())).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+        }
+
+        assertTrue(error.message!!.contains("cannot determine"))
+        assertTrue(error.message!!.contains("index unavailable"))
+        assertFalse(File(projectDir, ".junie/mcp/mcp.json").exists())
+    }
+
+    @Test
     fun `no token is written into a junie config that git tracks`() {
         assumeFalse(isWindows())
-        val projectDir = temp.newFolder("tracked").apply { File(this, ".git").mkdirs() }
+        val projectDir = temp.newFolder("tracked").apply {
+            File(this, ".git").mkdirs()
+            File(this, ".git/HEAD").writeText("ref: refs/heads/main\n")
+        }
         val git = script("git", "exit 0")
 
         val error = assertThrows(McpAgentException::class.java) {
@@ -191,6 +247,13 @@ class McpTest {
     private fun script(name: String, body: String): File = File(temp.newFolder(), name).apply {
         writeText("#!/bin/sh\n$body\n")
         setExecutable(true)
+    }
+
+    private fun gitAvailable() = runCatching { runCommand(Path.of("git"), listOf("--version"), timeoutSeconds = 30).succeeded }.getOrDefault(false)
+
+    private fun git(directory: File, vararg arguments: String) {
+        val result = runCommand(Path.of("git"), arguments.toList(), directory.toPath(), timeoutSeconds = 30)
+        check(result.succeeded) { result.failureText() }
     }
 
     private fun isWindows() = System.getProperty("os.name").startsWith("Windows")

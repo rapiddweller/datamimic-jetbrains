@@ -108,9 +108,14 @@ class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : Mcp
 class GitIgnore(private val projectDir: Path, private val git: Path?) {
     /** Whether Git already tracks [relativePath]; then writing a secret there would reach the repository. */
     fun isTracked(relativePath: String): Boolean {
-        val cli = git ?: return false
-        if (!projectDir.resolve(".git").exists()) return false
-        return runCommand(cli, listOf("ls-files", "--error-unmatch", relativePath), projectDir, timeoutSeconds = 30).succeeded
+        if (!hasGitWorkTreeMarker()) return false
+        val cli = git ?: throw McpAgentException("Junie: cannot determine whether $relativePath is tracked because Git is unavailable.")
+        val result = runCommand(cli, listOf("ls-files", "--error-unmatch", relativePath), projectDir, timeoutSeconds = 30)
+        return when (result.exitCode) {
+            0 -> true
+            1 -> false
+            else -> throw McpAgentException("Junie: cannot determine whether $relativePath is tracked: ${result.failureText()}")
+        }
     }
 
     /** Adds [relativePath] to `.git/info/exclude`, which is local to this clone and never committed. */
@@ -123,6 +128,12 @@ class GitIgnore(private val projectDir: Path, private val git: Path?) {
         Files.createDirectories(exclude.parent)
         Files.writeString(exclude, current + (if (current.isEmpty() || current.endsWith("\n")) "" else "\n") + pattern + "\n")
     }
+
+    private fun hasGitWorkTreeMarker(): Boolean =
+        generateSequence(projectDir.toAbsolutePath().normalize()) { it.parent }.any { directory ->
+            val marker = directory.resolve(".git")
+            marker.resolve("HEAD").exists() || Files.isRegularFile(marker)
+        }
 }
 
 /** Writes atomically and, where the file system allows it, readable only by the owner. */
