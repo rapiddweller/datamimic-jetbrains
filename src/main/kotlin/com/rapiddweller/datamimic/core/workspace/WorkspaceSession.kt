@@ -99,6 +99,7 @@ class WorkspaceSession(
         onState = { state ->
             streamState = state
             if (state != StreamState.LIVE) locks.onStreamDown()
+            if (state == StreamState.LIVE) saver.retryTransientFailures()
             updatesFlow.tryEmit(WorkspaceUpdate.StreamChanged(state))
         },
         log = log,

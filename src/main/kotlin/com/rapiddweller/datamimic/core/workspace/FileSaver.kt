@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 enum class UploadFailure {
     /** Someone changed the file on the platform after this IDE read it, or created it there first. */
@@ -52,6 +53,8 @@ class FileSaver(
     private val versionUnknown = mutableMapOf<String, String>()
     private val states = mutableMapOf<String, UploadState>()
     private val running = mutableSetOf<String>()
+    private val retryableFailures = mutableSetOf<String>()
+    private val recoveryRequested = mutableSetOf<String>()
 
     @Synchronized
     fun state(path: String): UploadState = states[path] ?: UploadState.Synced
@@ -75,6 +78,15 @@ class FileSaver(
     }
 
     fun retry(path: String) = upload(path)
+
+    /** Uploads again only files whose failed upload may succeed after the stream comes back. */
+    fun retryTransientFailures() {
+        val failed = synchronized(this) {
+            running.forEach(recoveryRequested::add)
+            retryableFailures.toList()
+        }
+        failed.forEach(::upload)
+    }
 
     /**
      * The editor no longer needs the file while the version of its last upload is still unknown. Stops waiting for it,
@@ -101,11 +113,14 @@ class FileSaver(
     private fun upload(path: String) {
         synchronized(this) {
             if (!running.add(path)) return
+            retryableFailures.remove(path)
             states[path] = UploadState.Uploading
         }
         onStateChanged(path)
         scope.launch(Dispatchers.IO) {
             var failed = false
+            var recover = false
+            var retryable = false
             try {
                 while (true) {
                     if (synchronized(this@FileSaver) { path in versionUnknown }) adoptUploadedVersion(path)
@@ -116,17 +131,30 @@ class FileSaver(
                 throw e
             } catch (e: Exception) {
                 failed = true
-                synchronized(this@FileSaver) { states[path] = UploadState.Failed(e.failure(), failureMessage(path, e)) }
-                if (e.failure() == UploadFailure.LOCK_LOST) locks.drop(path)
+                val failure = e.failure()
+                retryable = e.isRetryable()
+                synchronized(this@FileSaver) {
+                    states[path] = UploadState.Failed(failure, failureMessage(path, e))
+                    if (retryable) retryableFailures += path else retryableFailures -= path
+                }
+                if (failure == UploadFailure.LOCK_LOST) locks.drop(path)
+                onStateChanged(path)
             } finally {
                 // WHY: decided together with leaving `running`, so a save that arrived after the loop's last check is not stranded.
                 val again = synchronized(this@FileSaver) {
                     running.remove(path)
-                    if (!failed) states.remove(path)
+                    if (!failed) {
+                        states.remove(path)
+                        retryableFailures.remove(path)
+                        recoveryRequested.remove(path)
+                    } else {
+                        val requested = recoveryRequested.remove(path)
+                        recover = retryable && requested
+                    }
                     !failed && path in unconfirmed
                 }
                 onStateChanged(path)
-                if (again) upload(path) else if (!needsLease(path)) onIdle(path)
+                if (recover || again) upload(path) else if (!needsLease(path)) onIdle(path)
             }
         }
     }
@@ -176,6 +204,9 @@ class FileSaver(
     private companion object {
         val VERSION_READ_RETRY_DELAYS_MS = listOf(250L, 1_000L)
     }
+
+    private fun Exception.isRetryable(): Boolean =
+        this is SessionExpiredException || this is IOException || (this is PlatformException && status >= 500)
 
     private fun Exception.failure(): UploadFailure = when {
         this is SessionExpiredException -> UploadFailure.SESSION_ENDED

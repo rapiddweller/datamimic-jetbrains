@@ -100,7 +100,7 @@ enum class StreamState {
  * Receive-only workspace event stream of one platform project. Lock state is unknown until the first snapshot,
  * so callers must treat files as read-only while the stream is not [StreamState.LIVE].
  *
- * All mutable state lives on the single [scheduler] thread; WebSocket callbacks only hand work over to it.
+ * Connection state lives on the single [scheduler] thread; socket ownership is synchronized with WebSocket callbacks.
  */
 class WorkspaceEventStream(
     private val http: HttpClient,
@@ -111,25 +111,44 @@ class WorkspaceEventStream(
     private val onState: (StreamState) -> Unit,
     /** Diagnostics for the IDE log: why the stream is not live. */
     private val log: (String) -> Unit = {},
+    /** Waits before each reconnect; the last one repeats for as long as the platform stays unreachable. */
+    private val reconnectDelaysMs: List<Long> = RECONNECT_DELAYS_MS,
 ) {
+    init {
+        require(reconnectDelaysMs.isNotEmpty()) { "Reconnect delays must not be empty." }
+    }
+
     private val scheduler = Executors.newSingleThreadScheduledExecutor { Thread(it, "DATAMIMIC workspace events").apply { isDaemon = true } }
+    private val socketLock = Any()
     private var socket: WebSocket? = null
     private var watchdog: ScheduledFuture<*>? = null
+    private var reconnect: ScheduledFuture<*>? = null
     private var lastMessageAt = System.nanoTime()
     private var attempt = 0
     private var state = StreamState.IDLE
+    @Volatile private var closed = false
+    @Volatile private var connectGeneration = 0L
 
     /** Connects, or reconnects after the stream gave up; a superseded or closed stream stays down. */
     fun start() {
+        if (closed) return
         onScheduler {
+            if (closed) return@onScheduler
             if (state != StreamState.IDLE && state != StreamState.UNAVAILABLE && state != StreamState.REFUSED) return@onScheduler
+            reconnect?.cancel(false)
             attempt = 0
+            setState(StreamState.CONNECTING)
             connect()
         }
     }
 
     /** Final: the stream never connects again, and its thread ends. */
     fun close() {
+        closed = true
+        synchronized(socketLock) {
+            socket?.abort()
+            socket = null
+        }
         onScheduler {
             setState(StreamState.CLOSED)
             stopSocket()
@@ -139,12 +158,14 @@ class WorkspaceEventStream(
     }
 
     private fun connect() {
-        if (state == StreamState.CLOSED || state == StreamState.SUPERSEDED) return
+        if (closed || state == StreamState.SUPERSEDED) return
+        val generation = ++connectGeneration
         val session = sessions.current() ?: return setState(StreamState.UNAVAILABLE)
-        setState(StreamState.CONNECTING)
+        // WHY: the slow retries of an unreachable platform stay UNAVAILABLE, so banners do not flicker with each attempt.
+        if (state != StreamState.UNAVAILABLE) setState(StreamState.CONNECTING)
         val path = "/api/v2/projects/${encode(projectId)}/workspace/events?client_binding_id=${encode(clientBindingId)}"
-        http.openPlatformWebSocket(session, clientBindingId, path, Listener())
-            .whenComplete { _, error -> if (error != null) onScheduler { onConnectFailed(session, error) } }
+        http.openPlatformWebSocket(session, clientBindingId, path, Listener(generation))
+            .whenComplete { _, error -> if (error != null) onScheduler { if (!closed && generation == connectGeneration) onConnectFailed(session, error) } }
     }
 
     private fun onConnectFailed(session: StoredSession, error: Throwable) {
@@ -201,18 +222,21 @@ class WorkspaceEventStream(
         }
     }
 
+    /** Repeats the final delay until the platform answers; only a refusal, a newer stream or [close] end retries. */
     private fun scheduleReconnect() {
-        if (state == StreamState.CLOSED || state == StreamState.SUPERSEDED) return
-        val delay = RECONNECT_DELAYS_MS.getOrNull(attempt++) ?: return setState(StreamState.UNAVAILABLE)
-        setState(StreamState.CONNECTING)
-        scheduler.schedule(::connect, delay, TimeUnit.MILLISECONDS)
+        if (closed || state == StreamState.SUPERSEDED) return
+        val delay = reconnectDelaysMs.getOrElse(attempt++) { reconnectDelaysMs.last() }
+        setState(if (attempt > reconnectDelaysMs.size) StreamState.UNAVAILABLE else StreamState.CONNECTING)
+        reconnect = scheduler.schedule(::connect, delay, TimeUnit.MILLISECONDS)
     }
 
     private fun stopSocket() {
         watchdog?.cancel(false)
         watchdog = null
-        socket?.abort()
-        socket = null
+        synchronized(socketLock) {
+            socket?.abort()
+            socket = null
+        }
     }
 
     private fun setState(next: StreamState) {
@@ -222,13 +246,25 @@ class WorkspaceEventStream(
         onState(next)
     }
 
-    private inner class Listener : WebSocket.Listener {
+    private inner class Listener(private val generation: Long) : WebSocket.Listener {
         private val buffer = StringBuilder()
 
         override fun onOpen(webSocket: WebSocket) {
             // WHY: runs before any onText is queued, so the first snapshot is never dropped.
-            val adopted = onScheduler { if (state == StreamState.CLOSED) webSocket.abort() else socket = webSocket }
-            if (adopted) webSocket.request(1) else webSocket.abort()
+            val adopted = synchronized(socketLock) {
+                if (closed || generation != connectGeneration) {
+                    false
+                } else {
+                    socket?.abort()
+                    socket = webSocket
+                    true
+                }
+            }
+            if (!adopted) {
+                webSocket.abort()
+                return
+            }
+            webSocket.request(1)
         }
 
         override fun onText(webSocket: WebSocket, data: CharSequence, last: Boolean): CompletionStage<*>? {
@@ -236,7 +272,7 @@ class WorkspaceEventStream(
             if (last) {
                 val text = buffer.toString()
                 buffer.setLength(0)
-                onScheduler { if (socket === webSocket) onMessage(text) }
+                onScheduler { if (ownsSocket(webSocket)) onMessage(text) }
             }
             webSocket.request(1)
             return null
@@ -248,13 +284,16 @@ class WorkspaceEventStream(
         }
 
         override fun onClose(webSocket: WebSocket, statusCode: Int, reason: String): CompletionStage<*>? {
-            onScheduler { if (socket === webSocket) onClosed(statusCode) }
+            onScheduler { if (ownsSocket(webSocket)) onClosed(statusCode) }
             return null
         }
 
         override fun onError(webSocket: WebSocket, error: Throwable) {
-            onScheduler { if (socket === webSocket) onClosed(-1) }
+            onScheduler { if (ownsSocket(webSocket)) onClosed(-1) }
         }
+
+        private fun ownsSocket(webSocket: WebSocket): Boolean =
+            !closed && generation == connectGeneration && synchronized(socketLock) { socket === webSocket }
     }
 
     private companion object {
@@ -262,6 +301,6 @@ class WorkspaceEventStream(
         const val FORBIDDEN = 403
         /** Sent by the platform when the same client binding opened a newer stream for this project. */
         const val CLIENT_BINDING_SUPERSEDED = 4001
-        val RECONNECT_DELAYS_MS = listOf(250L, 500L, 1_000L, 5_000L, 15_000L)
+        val RECONNECT_DELAYS_MS = listOf(250L, 500L, 1_000L, 5_000L, 15_000L, 30_000L)
     }
 }

@@ -14,6 +14,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.http.HttpClient
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -25,13 +26,16 @@ class WorkspaceEventStreamTest {
     private val events = CopyOnWriteArrayList<WorkspaceEvent>()
     private val states = LinkedBlockingQueue<StreamState>()
     private var stored: String? = json.encodeToString(StoredSession.serializer(), StoredSession(origin, "session-1"))
-    private val stream = WorkspaceEventStream(
+    private val stream = stream()
+
+    private fun stream(reconnectDelaysMs: List<Long>? = null) = WorkspaceEventStream(
         HttpClient.newHttpClient(),
         SessionService(HttpClient.newHttpClient(), { stored }, { stored = it }),
         "binding-1",
         "p1",
         onEvent = events::add,
         onState = states::add,
+        reconnectDelaysMs = reconnectDelaysMs ?: listOf(250L, 500L),
     )
 
     @After
@@ -83,10 +87,83 @@ class WorkspaceEventStreamTest {
         assertEquals(StreamState.CLOSED, generateSequence { states.poll() }.last())
     }
 
+    @Test
+    fun `an unreachable platform is retried until it answers, without flickering between states`() {
+        server.refuseWith = 503
+        server.serve { connection -> connection.text(SNAPSHOT) }
+        val quick = stream(reconnectDelaysMs = listOf(10L, 10L))
+
+        try {
+            quick.start()
+            repeat(5) { handshakes.poll(5, TimeUnit.SECONDS)!! }
+            server.refuseWith = null
+
+            assertEquals(listOf(StreamState.CONNECTING, StreamState.UNAVAILABLE, StreamState.LIVE), awaitStates(StreamState.LIVE))
+        } finally {
+            quick.close()
+        }
+    }
+
+    @Test
+    fun `a late older handshake cannot replace the newer live socket`() {
+        server.refuseWith = 503
+        server.serve { connection -> connection.text(SNAPSHOT) }
+        val quick = stream(reconnectDelaysMs = listOf(10L, 10L))
+
+        try {
+            quick.start()
+            repeat(3) { handshakes.poll(5, TimeUnit.SECONDS)!! }
+            val gate = CountDownLatch(1)
+            server.handshakeGate = gate
+            handshakes.poll(5, TimeUnit.SECONDS)!!
+
+            server.refuseWith = null
+            quick.start()
+            handshakes.poll(5, TimeUnit.SECONDS)!!
+            awaitStates(StreamState.LIVE)
+            events.clear()
+            val current = server.connections.poll(5, TimeUnit.SECONDS)!!
+            gate.countDown()
+
+            current.text("""{"type":"ping"}""")
+            awaitUntil { WorkspaceEvent.Ping in events }
+        } finally {
+            quick.close()
+        }
+    }
+
+    @Test
+    fun `a handshake that completes after close is aborted without scheduler adoption`() {
+        server.serve { connection -> connection.text(SNAPSHOT) }
+        val gate = CountDownLatch(1)
+        server.handshakeGate = gate
+        val quick = stream(reconnectDelaysMs = listOf(10L))
+
+        try {
+            quick.start()
+            handshakes.poll(5, TimeUnit.SECONDS)!!
+            quick.close()
+            gate.countDown()
+            server.connections.poll(5, TimeUnit.SECONDS)!!
+            Thread.sleep(50)
+
+            assertTrue(events.isEmpty())
+            assertEquals(StreamState.CLOSED, generateSequence { states.poll() }.last())
+        } finally {
+            quick.close()
+        }
+    }
+
     private fun awaitStates(last: StreamState): List<StreamState> {
         val seen = mutableListOf<StreamState>()
         while (seen.lastOrNull() != last) seen += states.poll(5, TimeUnit.SECONDS) ?: break
         return seen
+    }
+
+    private fun awaitUntil(condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!condition() && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        assertTrue(condition())
     }
 
     private companion object {

@@ -120,6 +120,113 @@ class WorkspaceTest {
     }
 
     @Test
+    fun `only transient failed uploads are retried`() {
+        bases.set(PATH, BASE)
+        bases.set(OTHER, FileBase("etag-old", "sha-old"))
+        platform.files[OTHER] = "<other/>" to "etag-9"
+        saver.save(OTHER, "<other mine='1'/>".toByteArray())
+        awaitIdle()
+        sessions.expire(sessions.current()!!)
+        saver.save(PATH, "<setup offline='1'/>".toByteArray())
+        awaitIdle()
+
+        sessions.login(platform.origin, "ada@example.com", "secret")
+        saver.retryTransientFailures()
+        awaitIdle()
+
+        assertEquals(UploadState.Synced, saver.state(PATH))
+        assertEquals("<setup offline='1'/>", platform.files.getValue(PATH).first)
+        val conflict = saver.state(OTHER)
+        assertTrue(conflict is UploadState.Failed && conflict.failure == UploadFailure.CONCURRENT_CHANGE)
+        assertEquals("<other/>", platform.files.getValue(OTHER).first)
+    }
+
+    @Test
+    fun `a live recovery retries a late transient upload failure once`() {
+        bases.set(PATH, BASE)
+        val gate = CountDownLatch(1)
+        platform.uploadGate = gate
+        platform.failingUploads = 2
+
+        saver.save(PATH, "<setup retry='1'/>".toByteArray())
+        awaitUntil { platform.uploadsReceived == 1 }
+        saver.retryTransientFailures()
+        gate.countDown()
+        awaitIdle()
+
+        val failed = saver.state(PATH)
+        assertTrue("state: $failed", failed is UploadState.Failed && failed.failure == UploadFailure.OTHER)
+        assertEquals("one recovery retry", 2, platform.uploadsReceived)
+    }
+
+    @Test
+    fun `a live retry requested as an upload fails is recovered`() {
+        bases.set(PATH, BASE)
+        platform.failingUploads = 1
+        lateinit var racing: FileSaver
+        racing = FileSaver(
+            "p1",
+            workspace,
+            locks,
+            bases,
+            refreshedEtag = { workspace.tree("p1").entry(it)?.etag },
+            scope,
+            onStateChanged = { path -> if (racing.state(path) is UploadState.Failed) racing.retryTransientFailures() },
+            onIdle = {},
+        )
+
+        racing.save(PATH, "<setup retry='1'/>".toByteArray())
+        awaitUntil { !racing.isUploading() }
+
+        assertEquals(UploadState.Synced, racing.state(PATH))
+        assertEquals("one recovery retry", 2, platform.uploadsReceived)
+    }
+
+    @Test
+    fun `a lock loss clears a pending live recovery`() {
+        bases.set(PATH, BASE)
+        val gate = CountDownLatch(1)
+        platform.uploadGate = gate
+        lateinit var lockLossSaver: FileSaver
+        val lockLossLocks = LockService(
+            "p1",
+            LocksApi(transport),
+            scope,
+            stillWanted = { true },
+            onAccessChanged = { path -> if (lockLossSaver.state(path) is UploadState.Failed) lockLossSaver.retryTransientFailures() },
+        )
+        lockLossSaver = FileSaver(
+            "p1",
+            workspace,
+            lockLossLocks,
+            bases,
+            refreshedEtag = { workspace.tree("p1").entry(it)?.etag },
+            scope,
+            onStateChanged = {},
+            onIdle = {},
+        )
+
+        lockLossSaver.save(PATH, "<setup retry='1'/>".toByteArray())
+        awaitUntil { platform.uploadsReceived == 1 }
+        platform.lockOwner = "another-client"
+        platform.lockGeneration = "99"
+        gate.countDown()
+        awaitUntil { !lockLossSaver.isUploading() }
+
+        platform.lockOwner = null
+        platform.lockGeneration = null
+        platform.uploadsReceived = 0
+        platform.failingUploads = 1
+        platform.uploadFailureStatus = 503
+        lockLossSaver.save(PATH, "<setup retry='2'/>".toByteArray())
+        awaitUntil { !lockLossSaver.isUploading() }
+
+        val failed = lockLossSaver.state(PATH)
+        assertTrue("state: $failed", failed is UploadState.Failed && failed.failure == UploadFailure.OTHER)
+        assertEquals("no inherited recovery retry", 1, platform.uploadsReceived)
+    }
+
+    @Test
     fun `a save arriving while an upload runs is uploaded right after it`() {
         bases.set(PATH, BASE)
         val gate = CountDownLatch(1)
@@ -272,6 +379,7 @@ class WorkspaceTest {
 
     private companion object {
         const val PATH = "model/datamimic.xml"
+        const val OTHER = "model/other.xml"
         val BASE = FileBase("etag-1", sha256("<setup/>".toByteArray()))
     }
 }
