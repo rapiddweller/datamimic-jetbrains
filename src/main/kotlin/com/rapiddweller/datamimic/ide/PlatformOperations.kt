@@ -42,11 +42,11 @@ internal const val NOTIFICATION_GROUP = "DATAMIMIC"
 
 private val prettyJson = Json { prettyPrint = true }
 
-/** Everything the user can do with a project row of the DATAMIMIC tool window. */
+/** Everything the user can do with a project row; [project] and [active] are null on the Welcome screen. */
 internal class PlatformOperations(
-    private val project: Project,
+    private val project: Project?,
     private val scope: CoroutineScope,
-    private val active: ActiveProject,
+    private val active: ActiveProject?,
     private val selection: () -> PlatformNode?,
 ) {
     private val platform = DatamimicPlatform.getInstance()
@@ -104,7 +104,8 @@ internal class PlatformOperations(
     }
 
     private fun runGeneration(target: PlatformProject, taskType: TaskType) {
-        val session = active.session() ?: return
+        val project = project ?: return
+        val session = active?.session() ?: return
         // WHY: the platform generates from its stored files, so local edits must reach it first.
         val notOnPlatform = flushPlatformEdits(project, session)
         if (notOnPlatform.isNotEmpty() && Messages.showOkCancelDialog(
@@ -159,9 +160,9 @@ internal class PlatformOperations(
         }
 
     private fun isActive(node: PlatformNode.ProjectNode): Boolean {
-        val identity = active.identity ?: return false
+        val identity = active?.identity ?: return false
         return identity.projectId == node.project.id && identity.origin == (platform.state.value as? AuthState.SignedIn)?.origin
     }
 
-    private fun isActiveProjectNode(node: PlatformNode?) = node is PlatformNode.ProjectNode && isActive(node) && active.session() != null
+    private fun isActiveProjectNode(node: PlatformNode?) = node is PlatformNode.ProjectNode && isActive(node) && active?.session() != null
 }
