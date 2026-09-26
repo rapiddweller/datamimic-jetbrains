@@ -136,6 +136,7 @@ class McpTest {
             parentFile.mkdirs()
             writeText("""{"mcpServers":{"github":{"command":"docker"}},"other":true}""")
         }
+        val rootGuidance = File(projectDir, "AGENTS.md").apply { writeText("user root guidance\n") }
         val agent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null))
 
         agent.register(McpServer("https://dm.example/mcp", mapOf("Authorization" to "Bearer t"), Instant.EPOCH))
@@ -146,11 +147,17 @@ class McpTest {
         assertEquals(setOf("github", "datamimic-platform"), servers.keys)
         assertEquals("Bearer t2", servers.getValue("datamimic-platform").jsonObject.getValue("headers").jsonObject.getValue("Authorization").jsonPrimitive.content)
         assertTrue("other settings survive", "other" in written)
-        assertEquals(listOf("/.junie/mcp/mcp.json"), File(projectDir, ".git/info/exclude").readLines().filter { it.isNotBlank() })
+        assertEquals(
+            setOf("/.junie/mcp/mcp.json", "/.junie/rules/datamimic.md"),
+            File(projectDir, ".git/info/exclude").readLines().filter { it.isNotBlank() }.toSet(),
+        )
         if (!isWindows()) assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(config.toPath())))
+        assertTrue(File(projectDir, ".junie/rules/datamimic.md").readText().contains("only `datamimic_*` MCP tools"))
+        assertEquals("user root guidance\n", rootGuidance.readText())
 
         agent.unregister()
         assertEquals(setOf("github"), json.parseToJsonElement(config.readText()).jsonObject.getValue("mcpServers").jsonObject.keys)
+        assertTrue(File(projectDir, ".junie/rules/datamimic.md").exists())
     }
 
     @Test
@@ -165,6 +172,104 @@ class McpTest {
     }
 
     @Test
+    fun `junie connects MCP but warns without replacing exclusive or conflicting guidance`() {
+        val exclusiveProject = temp.newFolder("exclusive-guidance")
+        File(exclusiveProject, ".junie/AGENTS.md").apply {
+            parentFile.mkdirs()
+            writeText("user guidance\n")
+        }
+
+        val exclusiveWarnings =
+            JunieAgent(exclusiveProject.toPath(), GitIgnore(exclusiveProject.toPath(), git = null)).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+
+        assertTrue(exclusiveWarnings.single().contains(".junie/AGENTS.md overrides project rules"))
+        assertEquals("user guidance\n", File(exclusiveProject, ".junie/AGENTS.md").readText())
+        assertTrue(File(exclusiveProject, ".junie/mcp/mcp.json").exists())
+
+        val ruleProject = temp.newFolder("rule-guidance")
+        val rule = File(ruleProject, ".junie/rules/datamimic.md").apply {
+            parentFile.mkdirs()
+            writeText("user routing\n")
+        }
+
+        val ruleWarnings =
+            JunieAgent(ruleProject.toPath(), GitIgnore(ruleProject.toPath(), git = null)).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+
+        assertTrue(ruleWarnings.single().contains("already contains user guidance"))
+        assertEquals("user routing\n", rule.readText())
+        assertTrue(File(ruleProject, ".junie/mcp/mcp.json").exists())
+    }
+
+    @Test
+    fun `junie keeps routing guidance changed after registration`() {
+        val projectDir = temp.newFolder("changed-guidance")
+        val agent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null))
+
+        agent.register(McpServer("https://dm.example/mcp", emptyMap(), Instant.EPOCH))
+        val rule = File(projectDir, ".junie/rules/datamimic.md")
+        rule.writeText("user changed this\n")
+        agent.unregister()
+
+        assertEquals("user changed this\n", rule.readText())
+        assertFalse(File(projectDir, ".junie/mcp/mcp.json").exists())
+    }
+
+    @Test
+    fun `junie does not follow a routing rule directory symlink`() {
+        assumeFalse(isWindows())
+        val projectDir = temp.newFolder("symlink-guidance")
+        val target = temp.newFolder("guidance-target")
+        val sentinel = File(target, "datamimic.md").apply { writeText("user target\n") }
+        File(projectDir, ".junie").mkdirs()
+        Files.createSymbolicLink(File(projectDir, ".junie/rules").toPath(), target.toPath())
+
+        val warnings =
+            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+
+        assertTrue(warnings.single().contains("symbolic link"))
+        assertEquals("user target\n", sentinel.readText())
+        assertTrue(File(projectDir, ".junie/mcp/mcp.json").exists())
+    }
+
+    @Test
+    fun `junie never writes a token through symlinked config paths`() {
+        assumeFalse(isWindows())
+        val projectDir = temp.newFolder("symlinked-junie")
+        val target = temp.newFolder("external-junie")
+        Files.createSymbolicLink(File(projectDir, ".junie").toPath(), target.toPath())
+
+        val error = assertThrows(McpAgentException::class.java) {
+            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(McpServer("https://x", mapOf("Authorization" to "Bearer secret"), Instant.EPOCH))
+        }
+
+        assertTrue(error.message!!.contains("symbolic link"))
+        assertFalse(File(target, "mcp/mcp.json").exists())
+        assertFalse(File(target, "rules/datamimic.md").exists())
+
+        val linkedConfigProject = temp.newFolder("symlinked-config")
+        val sentinel = temp.newFile("external-mcp.json").apply { writeText("user target\n") }
+        val config = File(linkedConfigProject, ".junie/mcp/mcp.json")
+        config.parentFile.mkdirs()
+        Files.createSymbolicLink(config.toPath(), sentinel.toPath())
+
+        assertThrows(McpAgentException::class.java) {
+            JunieAgent(linkedConfigProject.toPath(), GitIgnore(linkedConfigProject.toPath(), git = null)).register(McpServer("https://x", mapOf("Authorization" to "Bearer secret"), Instant.EPOCH))
+        }
+        assertEquals("user target\n", sentinel.readText())
+        assertTrue(Files.isSymbolicLink(config.toPath()))
+
+        val linkedMcpProject = temp.newFolder("symlinked-mcp-directory")
+        File(linkedMcpProject, ".junie").mkdirs()
+        val mcpTarget = temp.newFolder("external-mcp-directory")
+        Files.createSymbolicLink(File(linkedMcpProject, ".junie/mcp").toPath(), mcpTarget.toPath())
+
+        assertThrows(McpAgentException::class.java) {
+            JunieAgent(linkedMcpProject.toPath(), GitIgnore(linkedMcpProject.toPath(), git = null)).register(McpServer("https://x", mapOf("Authorization" to "Bearer secret"), Instant.EPOCH))
+        }
+        assertFalse(File(mcpTarget, "mcp.json").exists())
+    }
+
+    @Test
     fun `junie keeps its config ignored before git is initialized`() {
         val projectDir = temp.newFolder("no-git")
         val ignore = File(projectDir, ".junie/.gitignore").apply {
@@ -174,7 +279,7 @@ class McpTest {
 
         JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(McpServer("https://dm.example/mcp", emptyMap(), Instant.EPOCH))
 
-        assertEquals(listOf("/mcp/other.json", "/mcp/mcp.json"), ignore.readLines())
+        assertEquals(listOf("/mcp/other.json", "/rules/datamimic.md", "/mcp/mcp.json"), ignore.readLines())
         assertFalse(File(projectDir, ".git").exists())
     }
 
@@ -208,7 +313,29 @@ class McpTest {
         JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), Path.of("git"))).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
 
         assertTrue(File(projectDir, ".junie/mcp/mcp.json").exists())
-        assertEquals(listOf("/mcp/mcp.json"), File(projectDir, ".junie/.gitignore").readLines())
+        assertFalse(File(projectDir, ".junie/.gitignore").exists())
+        assertTrue(File(repository, ".git/info/exclude").readText().contains("/nested/project/.junie/mcp/mcp.json"))
+        assertTrue(File(repository, ".git/info/exclude").readText().contains("/nested/project/.junie/rules/datamimic.md"))
+        assertEquals("", runCommand(Path.of("git"), listOf("status", "--short"), repository.toPath(), timeoutSeconds = 30).stdout.trim())
+    }
+
+    @Test
+    fun `junie resolves the local exclude file for a linked git work tree`() {
+        assumeFalse(isWindows())
+        val projectDir = temp.newFolder("linked-worktree")
+        File(projectDir, ".git").writeText("gitdir: elsewhere\n")
+        val exclude = temp.newFile("linked-exclude")
+        val git = script(
+            "git",
+            "case \"$1\" in ls-files) exit 1 ;; rev-parse) echo '${exclude.path}' ;; esac",
+        )
+
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git.toPath())).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+
+        assertEquals(
+            setOf("/.junie/mcp/mcp.json", "/.junie/rules/datamimic.md"),
+            exclude.readLines().filter { it.isNotBlank() }.toSet(),
+        )
     }
 
     @Test

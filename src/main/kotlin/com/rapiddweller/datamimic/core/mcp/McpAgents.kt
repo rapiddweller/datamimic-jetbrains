@@ -31,7 +31,7 @@ const val MCP_SERVER_NAME = "datamimic-platform"
 class ClaudeCodeAgent(private val cli: Path, private val projectDir: Path) : McpAgent {
     override val displayName = "Claude Code"
 
-    override fun register(server: McpServer) {
+    override fun register(server: McpServer): List<String> {
         unregister()
         val headers = server.headers.flatMap { (name, value) -> listOf("--header", "$name: $value") }
         val result = runCommand(
@@ -41,6 +41,7 @@ class ClaudeCodeAgent(private val cli: Path, private val projectDir: Path) : Mcp
             timeoutSeconds = 60,
         )
         if (!result.succeeded) throw McpAgentException("Claude Code: ${result.failureText()}")
+        return emptyList()
     }
 
     override fun unregister() {
@@ -51,28 +52,35 @@ class ClaudeCodeAgent(private val cli: Path, private val projectDir: Path) : Mcp
 
 /**
  * Junie, through the project's `.junie/mcp/mcp.json`: the project-level file scopes the server to this IDE window.
- * Only the DATAMIMIC entry is touched; the file is kept out of Git because it holds the token.
+ * The plugin also owns one routing rule; neither it nor the MCP entry replaces user guidance.
  */
 class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : McpAgent {
     override val displayName = "Junie"
 
     private val configFile: Path = projectDir.resolve(CONFIG_PATH)
+    private val routingRuleFile: Path = projectDir.resolve(ROUTING_RULE_PATH)
 
-    override fun register(server: McpServer) {
+    override fun register(server: McpServer): List<String> {
+        if (mcpPathHasSymbolicLink()) {
+            throw McpAgentException("Junie: $CONFIG_PATH or its parent is a symbolic link, so the DATAMIMIC token is not written.")
+        }
         if (git.isTracked(CONFIG_PATH)) {
             throw McpAgentException("Junie: $CONFIG_PATH is tracked by Git, so the DATAMIMIC token is not written into it.")
         }
-        if (projectDir.resolve(".git").exists()) git.exclude(CONFIG_PATH) else excludeBeforeGitInit()
+        val currentServers = readServers()
+        val warning = publishRoutingRule()
+        excludeFromGit(CONFIG_PATH)
         val entry = buildJsonObject {
             put("url", server.url)
             putJsonObject("headers") { server.headers.forEach { (name, value) -> put(name, value) } }
         }
-        writeServers(readServers() + (MCP_SERVER_NAME to entry))
+        writeServers(currentServers + (MCP_SERVER_NAME to entry))
+        return listOfNotNull(warning)
     }
 
     override fun unregister() {
-        if (!configFile.exists()) return
-        writeServers(readServers() - MCP_SERVER_NAME)
+        if (mcpPathHasSymbolicLink()) return
+        if (configFile.exists()) writeServers(readServers() - MCP_SERVER_NAME)
     }
 
     private fun readConfig(): JsonObject =
@@ -89,22 +97,57 @@ class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : Mcp
         writeSecretFile(configFile, JsonObject(others + (SERVERS_KEY to JsonObject(servers))).toString())
     }
 
-    private fun excludeBeforeGitInit() {
+    private fun excludeFromGit(relativePath: String) {
+        if (!git.exclude(relativePath)) excludeBeforeGitInit(relativePath)
+    }
+
+    private fun excludeBeforeGitInit(relativePath: String) {
         val ignore = projectDir.resolve(".junie/.gitignore")
-        val pattern = "/mcp/mcp.json"
+        val pattern = "/${relativePath.removePrefix(".junie/")}"
         val current = if (ignore.exists()) ignore.readText() else ""
         if (current.lines().any { it.trim() == pattern }) return
         Files.createDirectories(ignore.parent)
         Files.writeString(ignore, current + (if (current.isEmpty() || current.endsWith("\n")) "" else "\n") + pattern + "\n")
     }
 
+    private fun publishRoutingRule(): String? {
+        if (Files.exists(projectDir.resolve(EXCLUSIVE_GUIDANCE_PATH), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return "$EXCLUSIVE_GUIDANCE_PATH overrides project rules; add the DATAMIMIC MCP-only routing there or use Junie's default project guidance."
+        }
+        if (routingPathHasSymbolicLink()) {
+            return "$ROUTING_RULE_PATH or its parent is a symbolic link; it was left unchanged. Add the DATAMIMIC MCP-only routing manually."
+        }
+        if (routingRuleFile.exists() && routingRuleFile.readText() != ROUTING_RULE) {
+            return "$ROUTING_RULE_PATH already contains user guidance; it was left unchanged. Add the DATAMIMIC MCP-only routing there."
+        }
+        if (!routingRuleFile.exists()) {
+            Files.createDirectories(routingRuleFile.parent)
+            Files.writeString(routingRuleFile, ROUTING_RULE)
+        }
+        excludeFromGit(ROUTING_RULE_PATH)
+        return null
+    }
+
+    private fun routingPathHasSymbolicLink(): Boolean =
+        listOf(".junie", ".junie/rules", ROUTING_RULE_PATH).any { Files.isSymbolicLink(projectDir.resolve(it)) }
+
+    private fun mcpPathHasSymbolicLink(): Boolean =
+        listOf(".junie", ".junie/mcp", CONFIG_PATH).any { Files.isSymbolicLink(projectDir.resolve(it)) }
+
     private companion object {
         const val CONFIG_PATH = ".junie/mcp/mcp.json"
+        const val EXCLUSIVE_GUIDANCE_PATH = ".junie/AGENTS.md"
+        const val ROUTING_RULE_PATH = ".junie/rules/datamimic.md"
         const val SERVERS_KEY = "mcpServers"
+        val ROUTING_RULE = """
+            # DATAMIMIC Platform routing
+
+            For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin with an available read-only `datamimic_*` tool. If those tools are unavailable, stop and report that DATAMIMIC MCP tools are unavailable. Do not fall back to local files, search, terminal commands, or local skills.
+        """.trimIndent() + "\n"
     }
 }
 
-/** Keeps files that hold credentials out of the project's Git repository, without touching shared ignore files. */
+/** Keeps plugin-owned local files out of Git without touching shared ignore files. */
 class GitIgnore(private val projectDir: Path, private val git: Path?) {
     /** Whether Git already tracks [relativePath]; then writing a secret there would reach the repository. */
     fun isTracked(relativePath: String): Boolean {
@@ -118,21 +161,40 @@ class GitIgnore(private val projectDir: Path, private val git: Path?) {
         }
     }
 
-    /** Adds [relativePath] to `.git/info/exclude`, which is local to this clone and never committed. */
-    fun exclude(relativePath: String) {
-        val exclude = projectDir.resolve(".git/info/exclude")
-        if (!projectDir.resolve(".git").exists()) return
-        val pattern = "/$relativePath"
+    /** Adds [relativePath] to the containing work tree's local exclude file. Returns false before Git is initialized. */
+    fun exclude(relativePath: String): Boolean {
+        val root = repositoryRootForExclusion() ?: return false
+        val marker = root.resolve(".git")
+        val exclude = if (Files.isDirectory(marker)) {
+            marker.resolve("info/exclude")
+        } else {
+            val cli = git ?: throw McpAgentException("Junie: cannot locate Git's local exclude file because Git is unavailable.")
+            val result = runCommand(cli, listOf("rev-parse", "--git-path", "info/exclude"), projectDir, timeoutSeconds = 30)
+            if (!result.succeeded) throw McpAgentException("Junie: cannot locate Git's local exclude file: ${result.failureText()}")
+            val path = Path.of(result.stdout.trim())
+            if (path.isAbsolute) path else projectDir.resolve(path).normalize()
+        }
+        val target = projectDir.resolve(relativePath).toAbsolutePath().normalize()
+        val rootPath = root.toAbsolutePath().normalize()
+        check(target.startsWith(rootPath)) { "$target is outside Git work tree $rootPath" }
+        val pattern = "/${rootPath.relativize(target).toString().replace(java.io.File.separatorChar, '/')}"
         val current = if (exclude.exists()) exclude.readText() else ""
-        if (current.lines().any { it.trim() == pattern }) return
+        if (current.lines().any { it.trim() == pattern }) return true
         Files.createDirectories(exclude.parent)
         Files.writeString(exclude, current + (if (current.isEmpty() || current.endsWith("\n")) "" else "\n") + pattern + "\n")
+        return true
     }
 
     private fun hasGitWorkTreeMarker(): Boolean =
         generateSequence(projectDir.toAbsolutePath().normalize()) { it.parent }.any { directory ->
             val marker = directory.resolve(".git")
             marker.resolve("HEAD").exists() || Files.isRegularFile(marker)
+        }
+
+    private fun repositoryRootForExclusion(): Path? =
+        generateSequence(projectDir.toAbsolutePath().normalize()) { it.parent }.firstOrNull { directory ->
+            val marker = directory.resolve(".git")
+            Files.isDirectory(marker) || Files.isRegularFile(marker)
         }
 }
 

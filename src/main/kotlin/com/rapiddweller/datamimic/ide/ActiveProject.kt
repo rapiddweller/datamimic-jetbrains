@@ -215,6 +215,9 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
         if (publication.failures.isNotEmpty()) {
             notify("Could not connect IDE agents to ${target.projectName}:\n" + publication.failures.joinToString("\n"), NotificationType.WARNING)
         }
+        if (publication.warnings.isNotEmpty()) {
+            notify("IDE agents connected to ${target.projectName} with warnings:\n" + publication.warnings.joinToString("\n"), NotificationType.WARNING)
+        }
     }
 
     /** IDE agents of this window that can be connected automatically. */
