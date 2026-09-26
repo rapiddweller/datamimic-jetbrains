@@ -41,10 +41,16 @@ import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import com.rapiddweller.datamimic.core.workspace.WorkspaceApi
 import com.rapiddweller.datamimic.core.workspace.WorkspaceSession
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.net.http.HttpClient
 import java.nio.file.Path
 import java.time.Duration
@@ -62,6 +68,60 @@ sealed interface AuthState {
 /** A file of a synced project folder and the platform session it belongs to. */
 class SyncedFile(val session: WorkspaceSession, val path: String)
 
+/** Keeps a closing session visible until its own shutdown completion says it is safe to replace. */
+internal class WorkspaceRegistry<T> {
+    internal class Entry<T>(val value: T, val origin: PlatformOrigin?, var shutdown: Deferred<Unit>? = null, var finalization: Deferred<Unit>? = null)
+
+    private val entries = mutableMapOf<String, Entry<T>>()
+    private var admitting = true
+    private var disposed = false
+
+    @Synchronized
+    fun getOrCreate(projectId: String, origin: PlatformOrigin?, create: () -> T): T {
+        check(admitting) { "DATAMIMIC is shutting down." }
+        val entry = entries[projectId]
+        check(entry?.shutdown == null) { "Workspace session is closing." }
+        return entry?.value ?: create().also { entries[projectId] = Entry(it, origin) }
+    }
+
+    @Synchronized
+    fun closeAdmission() {
+        admitting = false
+    }
+
+    @Synchronized
+    fun reopenAdmission() {
+        if (!disposed) admitting = true
+    }
+
+    @Synchronized
+    fun closeAdmissionPermanently() {
+        disposed = true
+        admitting = false
+    }
+
+    @Synchronized
+    fun beginShutdown(projectId: String, begin: (T) -> Deferred<Unit>, finalize: (Entry<T>) -> Deferred<Unit>): Entry<T>? = entries[projectId]?.also { entry ->
+        if (entry.shutdown == null) entry.shutdown = begin(entry.value)
+        if (entry.finalization == null) entry.finalization = finalize(entry)
+    }
+
+    @Synchronized
+    fun entries(): List<Pair<String, Entry<T>>> = entries.toList()
+
+    @Synchronized
+    fun value(projectId: String): T? = entries[projectId]?.value
+
+    @Synchronized
+    fun shutdown(projectId: String): Deferred<Unit>? = entries[projectId]?.finalization
+
+    @Synchronized
+    fun values(): List<T> = entries.values.map(Entry<T>::value)
+
+    @Synchronized
+    fun remove(projectId: String, entry: Entry<T>): Boolean = entries.remove(projectId, entry)
+}
+
 /**
  * The platform connection of this IDE process, shared by all project windows: one sign-in, one client binding,
  * and one [WorkspaceSession] per platform project whose folder is synced.
@@ -69,6 +129,7 @@ class SyncedFile(val session: WorkspaceSession, val path: String)
 @Service(Service.Level.APP)
 class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     private val http = platformHttpClient()
+    private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // WHY: scoped per IDE product so two installed IDEs never overwrite each other's session.
     private val credentials = CredentialAttributes(
@@ -93,7 +154,7 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     private val locks = LocksApi(transport)
     private val mcpAccess = McpAccess(ProjectTokensApi(transport), ApplicationInfo.getInstance().build.productCode, transport.clientBindingId)
 
-    private val workspaces = mutableMapOf<String, WorkspaceSession>()
+    private val workspaces = WorkspaceRegistry<WorkspaceSession>()
 
     /** How many IDE windows have each platform project active; the last one to leave closes it on the platform. */
     private val activeWindows = mutableMapOf<String, Int>()
@@ -132,14 +193,32 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     fun signIn(input: LoginInput) {
         val origin = input.origin
         val previousOrigin = synchronized(this) { workspacesOrigin }
-        sessions.login(origin, input.email, input.password)
+        var admissionClosed = false
+        val beforeReplace = if (previousOrigin != null && previousOrigin != origin) {
+            {
+                val shutdowns = synchronized(this) {
+                    admissionClosed = true
+                    workspaces.closeAdmission()
+                    closeWorkspacesLocked(release = true)
+                }
+                runBlocking { shutdowns.forEach { it.await() } }
+            }
+        } else {
+            null
+        }
+        var signedIn = false
+        try {
+            sessions.login(origin, input.email, input.password, beforeReplace)
+            signedIn = true
+        } finally {
+            if (admissionClosed || signedIn) synchronized(this) { workspaces.reopenAdmission() }
+        }
         lastPlatformUrl = origin.value
         PropertiesComponent.getInstance().apply {
             setValue(EMAIL_KEY, input.email)
             setValue(REMEMBER_PASSWORD_KEY, input.rememberPassword)
         }
         PasswordSafe.instance.set(loginCredentials(origin.value), if (input.rememberPassword) Credentials(input.email, input.password) else null)
-        if (previousOrigin != null && previousOrigin != origin) closeWorkspaces()
         // WHY: after an expired session, open workspaces keep their unconfirmed edits and only need live updates again.
         openWorkspaces().forEach(WorkspaceSession::start)
         stateFlow.value = AuthState.SignedIn(account.me(), origin)
@@ -147,7 +226,11 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
 
     /** Blocking; call off the UI thread. @return false when the platform could not revoke the session. */
     fun signOut(): Boolean {
-        closeWorkspaces()
+        val shutdowns = synchronized(this) {
+            workspaces.closeAdmission()
+            closeWorkspacesLocked(release = true)
+        }
+        runBlocking { shutdowns.forEach { it.await() } }
         val revoked = sessions.logout()
         stateFlow.value = AuthState.SignedOut(
             if (revoked) null else "Signed out locally. The platform was unreachable, so the session expires there on its own.",
@@ -165,22 +248,32 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     }
 
     override fun dispose() {
-        val open = synchronized(this) { workspaces.values.toList().also { workspaces.clear() } }
-        open.forEach(WorkspaceSession::dispose)
-        http.shutdownNow()
+        val shutdowns = synchronized(this) {
+            workspaces.closeAdmissionPermanently()
+            closeWorkspacesLocked(release = false)
+        }
+        teardownScope.launch {
+            shutdowns.forEach { it.await() }
+            http.shutdownNow()
+            teardownScope.cancel()
+        }
     }
 
     /** The session that syncs [projectId] with [folder], started on first use. */
-    @Synchronized
-    fun workspace(projectId: String, folder: ProjectFolder): WorkspaceSession = workspaces.getOrPut(projectId) {
+    fun workspace(projectId: String, folder: ProjectFolder): WorkspaceSession = synchronized(this) {
+        workspaceLocked(projectId, folder)
+    }
+
+    private fun workspaceLocked(projectId: String, folder: ProjectFolder): WorkspaceSession {
+        return workspaces.getOrCreate(projectId, sessions.current()?.origin) {
         workspacesOrigin = sessions.current()?.origin
         WorkspaceSession(projectId, folder, workspace, locks, http, sessions, transport.clientBindingId, scope, IdeEditor, LOG::info).also { it.start() }
+        }
     }
 
     /** An IDE window opened the folder of [projectId]. */
-    fun activate(projectId: String, folder: ProjectFolder): WorkspaceSession {
-        synchronized(this) { activeWindows.merge(projectId, 1, Int::plus) }
-        return workspace(projectId, folder)
+    fun activate(projectId: String, folder: ProjectFolder): WorkspaceSession = synchronized(this) {
+        workspaceLocked(projectId, folder).also { activeWindows.merge(projectId, 1, Int::plus) }
     }
 
     /**
@@ -188,15 +281,11 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
      * agents' project token is revoked. Blocking; call off the UI thread.
      */
     fun deactivate(projectId: String) {
-        val last = synchronized(this) {
+        synchronized(this) {
             val remaining = (activeWindows[projectId] ?: 0) - 1
             if (remaining > 0) activeWindows[projectId] = remaining else activeWindows.remove(projectId)
-            remaining <= 0
+            if (remaining > 0) null else workspaces.beginShutdown(projectId, { it.beginShutdown(release = true) }, ::finishShutdown)
         }
-        if (!last) return
-        synchronized(this) { workspaces.remove(projectId) }?.close()
-        val origin = sessions.current()?.origin ?: return
-        runCatching { mcpAccess.revoke(origin, projectId) }
     }
 
     /** The MCP server of [projectId] as IDE agents need it. Blocking; call off the UI thread. */
@@ -212,10 +301,12 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
         LspBridge(http, sessions, transport.clientBindingId, projectId, onRejected, onLink, log)
 
     @Synchronized
-    fun existingWorkspace(projectId: String): WorkspaceSession? = workspaces[projectId]
+    fun existingWorkspace(projectId: String): WorkspaceSession? = workspaces.value(projectId)
 
     @Synchronized
-    fun openWorkspaces(): List<WorkspaceSession> = workspaces.values.toList()
+    fun openWorkspaces(): List<WorkspaceSession> = workspaces.values()
+
+    fun workspaceShutdown(projectId: String): Deferred<Unit>? = workspaces.shutdown(projectId)
 
     fun syncedFile(file: VirtualFile): SyncedFile? = file.toNioPathOrNull()?.let(::syncedFile)
 
@@ -223,13 +314,33 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     fun syncedFile(file: Path): SyncedFile? =
         openWorkspaces().firstNotNullOfOrNull { session -> session.folder.pathOf(file)?.let { SyncedFile(session, it) } }
 
-    private fun closeWorkspaces() {
-        val closing = synchronized(this) {
-            workspacesOrigin = null
-            workspaces.values.toList().also { workspaces.clear() }
-        }
-        closing.forEach(WorkspaceSession::close)
+    private fun closeWorkspaces(release: Boolean): List<Deferred<Unit>> {
+        return synchronized(this) { closeWorkspacesLocked(release) }
     }
+
+    private fun closeWorkspacesLocked(release: Boolean): List<Deferred<Unit>> {
+        workspacesOrigin = null
+        return workspaces.entries().mapNotNull { (projectId, _) ->
+            workspaces.beginShutdown(projectId, { it.beginShutdown(release) }, ::finishShutdown)?.finalization
+        }
+    }
+
+    private fun finishShutdown(entry: WorkspaceRegistry.Entry<WorkspaceSession>): Deferred<Unit> =
+        teardownScope.async {
+            checkNotNull(entry.shutdown).await()
+            entry.origin?.let { origin ->
+                try {
+                    mcpAccess.revoke(origin, entry.value.projectId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // A token left behind after a failed shutdown expires on the platform.
+                }
+            }
+            synchronized(this@DatamimicPlatform) {
+                workspaces.remove(entry.value.projectId, entry)
+            }
+        }
 
     private fun loginCredentials(platformUrl: String) = CredentialAttributes(generateServiceName("DATAMIMIC", "login $platformUrl"))
 

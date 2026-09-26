@@ -45,6 +45,7 @@ class LockService(
     /** Whether an editor still needs the file; a lease that arrives after it stopped needing it is given back. */
     private val stillWanted: (path: String) -> Boolean,
     private val onAccessChanged: (path: String) -> Unit,
+    private val accepting: () -> Boolean = { true },
 ) {
     private class Lease(var grant: LockGrant, val heartbeat: Job)
 
@@ -73,6 +74,7 @@ class LockService(
 
     /** Starts acquiring in the background when the file is free; returns immediately. */
     fun requestLease(path: String) {
+        if (!accepting()) return
         if (access(path) != WriteAccess.Acquiring) return
         synchronized(this) { if (!acquiring.add(path)) return }
         scope.launch(Dispatchers.IO) {
@@ -92,6 +94,7 @@ class LockService(
 
     /** The current lease, acquiring it first when needed. */
     fun lease(path: String): LockGrant {
+        check(accepting()) { "Workspace session is closed." }
         synchronized(this) { leases[path]?.let { return it.grant } }
         val grant = api.acquire(DocumentRef(projectId, path))
         adopt(path, grant)
@@ -100,6 +103,7 @@ class LockService(
 
     /** Takes a foreign lock the user explicitly chose to override. */
     fun takeover(path: String, expectedGeneration: String): LockGrant {
+        check(accepting()) { "Workspace session is closed." }
         val grant = api.takeover(DocumentRef(projectId, path), expectedGeneration)
         adopt(path, grant)
         return grant
@@ -109,7 +113,13 @@ class LockService(
         val lease = synchronized(this) { leases.remove(path) } ?: return
         lease.heartbeat.cancel()
         onAccessChanged(path)
-        runCatching { api.release(DocumentRef(projectId, path), lease.grant.generation) }
+        try {
+            api.release(DocumentRef(projectId, path), lease.grant.generation)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // A failed sign-out still lets the platform expire the lease.
+        }
     }
 
     fun releaseAll() = synchronized(this) { leases.keys.toList() }.forEach(::release)

@@ -32,6 +32,7 @@ import com.rapiddweller.datamimic.core.workspace.WorkspaceSession
 import com.rapiddweller.datamimic.core.workspace.WorkspaceUpdate
 import com.rapiddweller.datamimic.ide.editing.PlatformEditors
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -64,6 +65,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
         agents = ::agents,
     )
     private var renewal: Job? = null
+    private var reconnect: Job? = null
     private var updates: Job? = null
     private var missingNotice: Notification? = null
     private var otherPlatformNotified = false
@@ -73,7 +75,18 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
             scope.launch {
                 platform.state.collect { auth ->
                     when (auth) {
-                        is AuthState.SignedIn -> if (auth.origin == identity.origin) connect(identity) else notifyOtherPlatform(identity)
+                        is AuthState.SignedIn -> if (auth.origin == identity.origin) {
+                            try {
+                                connect(identity)
+                            } catch (e: IllegalStateException) {
+                                reconnectWhenDrained(identity)
+                            }
+                        } else {
+                            reconnect?.cancel()
+                            renewal?.cancel()
+                            withContext(Dispatchers.IO) { connection.leave() }
+                            notifyOtherPlatform(identity)
+                        }
                         // WHY: an expired session keeps the folder's sync state, so local edits upload after signing in again.
                         is AuthState.SignedOut -> {
                             renewal?.cancel()
@@ -113,6 +126,15 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
         renewal = scope.launch {
             delay(Duration.between(Instant.now(), platform.mcpRenewalDue(server)).toMillis().coerceAtLeast(0))
             if (connection.activeProjectId == target.projectId) connect(target)
+        }
+    }
+
+    private fun reconnectWhenDrained(target: FolderIdentity) {
+        if (reconnect?.isActive == true) return
+        reconnect = scope.launch {
+            platform.workspaceShutdown(target.projectId)?.await()
+            val signedIn = platform.state.value as? AuthState.SignedIn ?: return@launch
+            if (signedIn.origin == target.origin) connect(target)
         }
     }
 
@@ -160,7 +182,13 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     }
 
     private suspend fun runSafely(block: suspend () -> Unit) {
-        runCatching { block() }.onFailure { notify(it.message ?: it.javaClass.simpleName, NotificationType.ERROR) }
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            notify(e.message ?: e.javaClass.simpleName, NotificationType.ERROR)
+        }
     }
 
     private fun notifyOtherPlatform(target: FolderIdentity) {

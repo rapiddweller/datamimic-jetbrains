@@ -8,8 +8,10 @@ import com.rapiddweller.datamimic.core.PlatformErrorCode
 import com.rapiddweller.datamimic.core.PlatformException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -90,6 +92,8 @@ class ProjectSync(
     /** Reads the tree from the platform again, without starting a pass. */
     private val reloadTree: () -> WorkspaceTree,
     private val scope: CoroutineScope,
+    private val accepting: () -> Boolean,
+    private val inSession: suspend (suspend () -> Unit) -> Unit,
     private val editor: LocalEditor,
     private val onUpdate: (WorkspaceUpdate) -> Unit,
 ) {
@@ -114,6 +118,7 @@ class ProjectSync(
 
     /** Compares everything soon; requests while a pass is waiting are merged into it. */
     fun requestSync() {
+        if (!accepting()) return
         if (!passRequested.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
             mutex.withLock {
@@ -130,10 +135,11 @@ class ProjectSync(
     }
 
     /** One full pass, e.g. the first download of a project; fails when the platform cannot be reached. */
-    suspend fun syncNow() = withContext(Dispatchers.IO) { mutex.withLock { pass() } }
+    suspend fun syncNow() = inSession { withContext(Dispatchers.IO) { mutex.withLock { pass() } } }
 
     /** The IDE saved [path], or something else wrote it: uploads it unless it is what the platform already has. */
     fun localChanged(path: String) {
+        if (!accepting()) return
         pendingLocalChanges.incrementAndGet()
         scope.launch(Dispatchers.IO) {
             try {
@@ -166,6 +172,7 @@ class ProjectSync(
      * More than a few files at once are only reported as missing, so a slip never empties a project on the platform.
      */
     fun deleted(path: String) {
+        if (!accepting()) return
         intents += path
         change("Could not delete $path on the platform", after = { intents -= path }, undo = { restore(bases.all().keys.filter { isAtOrUnder(it, path) }) }) {
             val remote = reloadTree().entries.filter { isAtOrUnder(it.path, path) }
@@ -189,6 +196,7 @@ class ProjectSync(
 
     /** The user moved or renamed [from] (a file or folder) to [to] in the IDE. */
     fun moved(from: String, to: String) {
+        if (!accepting()) return
         intents += from
         intents += to
         val undo = {
@@ -212,16 +220,21 @@ class ProjectSync(
     }
 
     /** Resolves a conflict for the platform: its version replaces the local file. */
-    suspend fun usePlatformVersion(path: String) = withContext(Dispatchers.IO) {
+    suspend fun usePlatformVersion(path: String) = inSession {
         mutex.withLock {
             saver.discard(path)
             conflicts.remove(path)
             val file = folder.resolve(path) ?: return@withLock
-            if (tree().entry(path) == null) {
+            val remote = tree().entry(path)
+            currentCoroutineContext().ensureActive()
+            if (remote == null) {
+                currentCoroutineContext().ensureActive()
                 bases.remove(path)
                 Files.deleteIfExists(file)
             } else {
-                write(path, file, api.read(DocumentRef(projectId, path)))
+                val content = api.read(DocumentRef(projectId, path))
+                currentCoroutineContext().ensureActive()
+                write(path, file, content)
             }
             editor.filesChanged(listOf(file))
             onUpdate(WorkspaceUpdate.FileChanged(path))
@@ -229,13 +242,17 @@ class ProjectSync(
     }
 
     /** Resolves a conflict for the local file: it replaces the platform's version with the next upload. */
-    suspend fun keepLocalVersion(path: String) = withContext(Dispatchers.IO) {
+    suspend fun keepLocalVersion(path: String) = inSession {
         mutex.withLock {
             saver.discard(path)
-            if (tree().entry(path) == null) {
+            val remote = tree().entry(path)
+            currentCoroutineContext().ensureActive()
+            if (remote == null) {
+                currentCoroutineContext().ensureActive()
                 bases.remove(path)
             } else {
                 val content = api.read(DocumentRef(projectId, path))
+                currentCoroutineContext().ensureActive()
                 bases.set(path, FileBase(content.etag ?: versionOf(path), sha256(content.bytes)))
             }
             conflicts.remove(path)
@@ -245,19 +262,20 @@ class ProjectSync(
     }
 
     /** Brings back files that were deleted locally but not on the platform. */
-    suspend fun restoreMissing(paths: Collection<String>) = withContext(Dispatchers.IO) {
+    suspend fun restoreMissing(paths: Collection<String>) = inSession {
         mutex.withLock { restore(paths) }
         requestSync()
     }
 
     /** Deletes files on the platform that the user deleted locally outside the IDE, once they confirmed it. */
-    suspend fun deleteMissing(paths: Collection<String>) = withContext(Dispatchers.IO) {
+    suspend fun deleteMissing(paths: Collection<String>) = inSession {
         mutex.withLock {
             for (path in paths) {
                 val file = folder.resolve(path) ?: continue
                 val base = bases.get(path) ?: continue
                 if (Files.exists(file)) continue
                 deleteFile(path, base.etag)
+                currentCoroutineContext().ensureActive()
                 bases.remove(path)
             }
             reloadTree()
@@ -265,8 +283,9 @@ class ProjectSync(
         requestSync()
     }
 
-    private fun pass() {
+    private suspend fun pass() {
         val remoteTree = tree()
+        currentCoroutineContext().ensureActive()
         val remote = remoteFiles(remoteTree)
         // ponytail: hashes every file on each pass; cache by size and mtime once projects hold large data files.
         val local = folder.localFiles().mapValues { sha256(Files.readAllBytes(it.value)) }
@@ -275,17 +294,24 @@ class ProjectSync(
         val failures = mutableListOf<String>()
         val nowMissing = mutableSetOf<String>()
         for ((path, step) in steps) {
+            currentCoroutineContext().ensureActive()
             if (isBusy(path)) continue
             val file = folder.resolve(path) ?: continue
             try {
                 when (step) {
                     SyncStep.DOWNLOAD -> if (download(path, file, local[path])) touched.add(file)
-                    SyncStep.UPLOAD -> saver.save(path, Files.readAllBytes(file))
+                    SyncStep.UPLOAD -> {
+                        currentCoroutineContext().ensureActive()
+                        saver.save(path, Files.readAllBytes(file))
+                    }
                     SyncStep.COMPARE -> compare(path, local.getValue(path))
                     SyncStep.DELETE_LOCAL -> if (deleteLocal(path, file, local.getValue(path))) touched.add(file)
                     SyncStep.MISSING_LOCALLY -> nowMissing += path
                     SyncStep.CONFLICT -> markConflict(path)
-                    SyncStep.FORGET -> bases.remove(path)
+                    SyncStep.FORGET -> {
+                        currentCoroutineContext().ensureActive()
+                        bases.remove(path)
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -321,9 +347,11 @@ class ProjectSync(
     }
 
     /** @return false when the local file changed since the pass looked; the next pass decides again. */
-    private fun download(path: String, file: Path, expectedSha: String?): Boolean {
+    private suspend fun download(path: String, file: Path, expectedSha: String?): Boolean {
         val content = api.read(DocumentRef(projectId, path))
+        currentCoroutineContext().ensureActive()
         if (!isUntouched(path, file, expectedSha)) return false
+        currentCoroutineContext().ensureActive()
         write(path, file, content)
         return true
     }
@@ -337,8 +365,9 @@ class ProjectSync(
         if (isReadOnly(path)) file.toFile().setWritable(false)
     }
 
-    private fun compare(path: String, localSha: String) {
+    private suspend fun compare(path: String, localSha: String) {
         val content = api.read(DocumentRef(projectId, path))
+        currentCoroutineContext().ensureActive()
         if (sha256(content.bytes) == localSha) {
             bases.set(path, FileBase(content.etag ?: versionOf(path), localSha))
         } else {
@@ -346,17 +375,31 @@ class ProjectSync(
         }
     }
 
-    private fun deleteLocal(path: String, file: Path, expectedSha: String): Boolean {
+    private suspend fun deleteLocal(path: String, file: Path, expectedSha: String): Boolean {
         if (!isUntouched(path, file, expectedSha)) return false
+        currentCoroutineContext().ensureActive()
         bases.remove(path)
         Files.deleteIfExists(file)
         pruneEmptyParents(file)
         return true
     }
 
-    private fun restore(paths: Collection<String>) {
-        val restored = paths.mapNotNull { path ->
-            folder.resolve(path)?.takeIf { runCatching { tree().entry(path) != null && download(path, it, expectedSha = null) }.getOrDefault(false) }
+    private suspend fun restore(paths: Collection<String>) {
+        val restored = buildList {
+            for (path in paths) {
+                currentCoroutineContext().ensureActive()
+                val file = folder.resolve(path) ?: continue
+                try {
+                    if (tree().entry(path) != null) {
+                        currentCoroutineContext().ensureActive()
+                        if (download(path, file, expectedSha = null)) add(file)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // The next sync retries this file.
+                }
+            }
         }
         if (restored.isNotEmpty()) editor.filesChanged(restored)
     }
@@ -368,20 +411,23 @@ class ProjectSync(
     /** Waits for running uploads of [paths] and forgets their state; the local files are what counts from now on. */
     private suspend fun releaseUploads(paths: Collection<String>) {
         withTimeoutOrNull(UPLOAD_WAIT_MS) { while (paths.any(saver::isUploading)) delay(100) }
+        currentCoroutineContext().ensureActive()
         paths.forEach(saver::discard)
         paths.forEach(conflicts::remove)
     }
 
-    private fun deleteFile(path: String, etag: String) = ignoreMissing {
+    private suspend fun deleteFile(path: String, etag: String) = ignoreMissing {
         withLease(path) { generation -> api.deleteFile(DocumentRef(projectId, path), etag, generation) }
     }
 
     /** Runs a change of an existing file under its edit lease; a lease taken only for this change is given back. */
-    private fun withLease(path: String, change: (generation: String) -> Unit) {
+    private suspend fun withLease(path: String, change: suspend (generation: String) -> Unit) {
+        currentCoroutineContext().ensureActive()
         val heldBefore = locks.generation(path) != null
         val grant = locks.lease(path)
         var changed = false
         try {
+            currentCoroutineContext().ensureActive()
             change(grant.generation)
             changed = true
         } finally {
@@ -393,7 +439,8 @@ class ProjectSync(
      * Runs a structural change the user made in the IDE, one at a time with syncing. [after] ends the change's hold on
      * its paths; [undo] then puts the local files back when the platform refused the change.
      */
-    private fun change(failure: String, after: () -> Unit = {}, undo: () -> Unit = {}, block: suspend () -> Unit) {
+    private fun change(failure: String, after: () -> Unit = {}, undo: suspend () -> Unit = {}, block: suspend () -> Unit) {
+        if (!accepting()) return
         scope.launch(Dispatchers.IO) {
             mutex.withLock {
                 val error = try {
@@ -407,9 +454,21 @@ class ProjectSync(
                     after()
                 }
                 // WHY: a pass or an undo against the tree from before the change would act on a stale platform state.
-                runCatching { reloadTree() }
+                try {
+                    reloadTree()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // The next sync reloads the tree.
+                }
                 if (error != null) {
-                    runCatching(undo)
+                    try {
+                        undo()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Report the platform failure even when restoring the local file also fails.
+                    }
                     onUpdate(WorkspaceUpdate.SyncProblem("$failure: ${error.message ?: error.javaClass.simpleName}"))
                 }
             }
@@ -455,7 +514,7 @@ interface LocalEditor {
     fun filesChanged(files: Collection<Path>)
 }
 
-private inline fun ignoreMissing(block: () -> Unit) {
+private suspend inline fun ignoreMissing(block: suspend () -> Unit) {
     try {
         block()
     } catch (e: PlatformException) {

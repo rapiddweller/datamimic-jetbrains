@@ -49,6 +49,11 @@ class FakePlatform : AutoCloseable {
     /** The next N tree reads fail with 500. */
     var failingTreeReads = 0
 
+    /** When set, a tree read waits here before it responds. */
+    var treeGate: CountDownLatch? = null
+
+    @Volatile var treeReads = 0
+
     /** When set, an upload waits here before it is processed. */
     var uploadGate: CountDownLatch? = null
 
@@ -58,6 +63,11 @@ class FakePlatform : AutoCloseable {
 
     /** When set, an acquire waits here before it is processed. */
     var acquireGate: CountDownLatch? = null
+
+    /** When set, a heartbeat waits here before it is processed. */
+    var heartbeatGate: CountDownLatch? = null
+    @Volatile var heartbeats = 0
+    @Volatile var renewAfterSeconds = 100
 
     /** When true, deletes fail as if someone changed the file in between. */
     var rejectDeletes = false
@@ -72,6 +82,7 @@ class FakePlatform : AutoCloseable {
 
     @Volatile var acquireCount = 0
     @Volatile var uploadsReceived = 0
+    @Volatile var releases = 0
 
     init {
         server.createContext("/api/v2/session/login") { exchange ->
@@ -91,6 +102,8 @@ class FakePlatform : AutoCloseable {
             exchange.respond(200, projectPages[page - 1])
         }
         authenticated("/api/v2/projects/p1/workspace/tree") { exchange ->
+            treeReads++
+            treeGate?.await(5, TimeUnit.SECONDS)
             if (failingTreeReads > 0) {
                 failingTreeReads--
                 return@authenticated exchange.error(500, "INTERNAL_SERVER_ERROR", "Tree temporarily unavailable")
@@ -199,10 +212,13 @@ class FakePlatform : AutoCloseable {
                     exchange.respond(200, grant(lockGeneration.orEmpty()))
                 }
                 "heartbeat" -> {
+                    heartbeats++
+                    heartbeatGate?.await(5, TimeUnit.SECONDS)
                     if (!ownsLock(exchange, generation)) return@authenticated exchange.error(409, "FILE_LOCK_SUPERSEDED", "The file lock changed.")
                     exchange.respond(200, grant(lockGeneration.orEmpty()))
                 }
                 else -> {
+                    releases++
                     if (ownsLock(exchange, generation)) {
                         lockOwner = null
                         lockGeneration = null
@@ -250,7 +266,7 @@ class FakePlatform : AutoCloseable {
         lockOwner != null && lockOwner == exchange.requestHeaders.getFirst("X-DATAMIMIC-Client-Binding") && generation == lockGeneration
 
     private fun grant(generation: String) =
-        """{"path":"x","action":"acquired","generation":"$generation","lease_ttl_seconds":300,"renew_after_seconds":100}"""
+        """{"path":"x","action":"acquired","generation":"$generation","lease_ttl_seconds":300,"renew_after_seconds":$renewAfterSeconds}"""
 
     private fun authenticated(path: String, handler: (HttpExchange) -> Unit) = server.createContext(path) { exchange ->
         seenBindings += exchange.requestHeaders.getFirst("X-DATAMIMIC-Client-Binding")

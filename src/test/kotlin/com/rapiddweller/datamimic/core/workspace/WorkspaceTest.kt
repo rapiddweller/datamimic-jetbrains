@@ -11,6 +11,8 @@ import com.rapiddweller.datamimic.core.json
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,7 +22,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.net.http.HttpClient
+import java.nio.file.Files
 
 class WorkspaceTest {
     private val platform = FakePlatform()
@@ -30,7 +34,7 @@ class WorkspaceTest {
     private val transport = PlatformHttp(http, sessions, "binding-1")
     private val workspace = WorkspaceApi(transport)
     private val scope = CoroutineScope(SupervisorJob())
-    private val locks = LockService("p1", LocksApi(transport), scope, stillWanted = { true }) {}
+    private val locks = LockService("p1", LocksApi(transport), scope, stillWanted = { true }, onAccessChanged = {})
 
     @get:Rule
     val temp = TemporaryFolder()
@@ -84,6 +88,104 @@ class WorkspaceTest {
         assertEquals("<setup a='1'/>" to "etag-2", platform.files[PATH])
         assertEquals(Triple(PATH, "etag-1", "1"), platform.uploads.single())
         assertEquals(FileBase("etag-2", sha256("<setup a='1'/>".toByteArray())), bases.get(PATH))
+    }
+
+    @Test
+    fun `begin shutdown returns while an active heartbeat keeps the lease until upload drain`() {
+        session.bases.set(PATH, BASE)
+        val gate = CountDownLatch(1)
+        platform.uploadGate = gate
+        session.saver.save(PATH, "<setup closing='1'/>".toByteArray())
+        awaitUntil { platform.uploadsReceived == 1 && platform.lockOwner == "binding-1" }
+
+        val first = session.beginShutdown(release = true)
+        val second = session.beginShutdown(release = false)
+        val secondCaller = CountDownLatch(1)
+        Thread { session.close(); secondCaller.countDown() }.start()
+
+        assertTrue(first === second)
+        assertFalse("shutdown must wait for the owned upload", first.isCompleted)
+        assertFalse("a second close returned before the shared drain", secondCaller.await(50, TimeUnit.MILLISECONDS))
+        assertEquals("binding-1", platform.lockOwner)
+        session.saver.save(PATH, "<setup ignored='1'/>".toByteArray())
+        assertEquals(1, platform.uploadsReceived)
+
+        gate.countDown()
+        runBlocking { first.await() }
+        assertTrue(secondCaller.await(5, TimeUnit.SECONDS))
+        assertEquals(1, platform.releases)
+        assertEquals(null, platform.lockOwner)
+        assertTrue(session.dispose() === first)
+        assertEquals(1, platform.releases)
+    }
+
+    @Test
+    fun `begin shutdown returns while an in-flight heartbeat drains`() {
+        session.bases.set(PATH, BASE)
+        val gate = CountDownLatch(1)
+        platform.renewAfterSeconds = 1
+        platform.heartbeatGate = gate
+        session.editorShown(PATH)
+        session.saver.save(PATH, "<setup heartbeat='1'/>".toByteArray())
+        awaitUntil { platform.heartbeats == 1 }
+        assertTrue(session.locks.generation(PATH) != null)
+
+        val shutdown = session.beginShutdown(release = true)
+
+        assertFalse(shutdown.isCompleted)
+        assertEquals("binding-1", platform.lockOwner)
+        gate.countDown()
+        runBlocking { shutdown.await() }
+        assertEquals(1, platform.releases)
+        assertEquals(null, platform.lockOwner)
+    }
+
+    @Test
+    fun `caller cancellation cancels a caller initiated sync`() {
+        val gate = CountDownLatch(1)
+        platform.treeGate = gate
+        val caller = scope.launch { session.sync.syncNow() }
+        awaitUntil { platform.treeReads == 1 }
+
+        caller.cancel()
+        runBlocking { caller.join() }
+
+        assertTrue(caller.isCancelled)
+        assertFalse(Files.exists(folder.root.resolve(PATH)))
+        assertEquals(null, session.bases.get(PATH))
+        gate.countDown()
+        runBlocking { session.awaitShutdown(release = false) }
+        assertFalse(Files.exists(folder.root.resolve(PATH)))
+        assertEquals(null, session.bases.get(PATH))
+    }
+
+    @Test
+    fun `shutdown completes after its parent scope was already cancelled`() {
+        val parent = CoroutineScope(SupervisorJob())
+        val orphan = WorkspaceSession("p1", folder, workspace, LocksApi(transport), http, sessions, "binding-1", parent, NoEditor)
+        parent.cancel()
+
+        runBlocking { orphan.awaitShutdown(release = false) }
+    }
+
+    @Test
+    fun `shutdown drains and releases after its parent was cancelled`() {
+        val parent = CoroutineScope(SupervisorJob())
+        val child = WorkspaceSession("p1", folder, workspace, LocksApi(transport), http, sessions, "binding-1", parent, NoEditor)
+        child.bases.set(PATH, BASE)
+        val gate = CountDownLatch(1)
+        platform.uploadGate = gate
+        child.saver.save(PATH, "<setup parent-cancelled='1'/>".toByteArray())
+        awaitUntil { platform.uploadsReceived == 1 && platform.lockOwner == "binding-1" }
+
+        parent.cancel()
+        val shutdown = child.beginShutdown(release = true)
+        assertFalse(shutdown.isCompleted)
+        gate.countDown()
+        runBlocking { shutdown.await() }
+
+        assertEquals(1, platform.releases)
+        assertEquals(null, platform.lockOwner)
     }
 
     @Test

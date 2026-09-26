@@ -42,6 +42,7 @@ import com.rapiddweller.datamimic.core.workspace.WriteAccess
 import com.rapiddweller.datamimic.ide.DatamimicPlatform
 import com.rapiddweller.datamimic.ide.SyncedFile
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,7 +78,7 @@ class PlatformEditors(private val project: Project, private val scope: Coroutine
         ) == Messages.OK
         if (!confirmed) return
         resolve("Take Over Failed") {
-            withContext(Dispatchers.IO) { synced.session.locks.takeover(synced.path, notice.generation) }
+            synced.session.takeOver(synced.path, notice.generation)
             // WHY: the other client may have saved in between; the sync brings that version unless there are local edits.
             synced.session.sync.requestSync()
         }
@@ -89,7 +90,13 @@ class PlatformEditors(private val project: Project, private val scope: Coroutine
 
     private fun resolve(title: String, block: suspend () -> Unit) {
         scope.launch(Dispatchers.EDT) {
-            runCatching { block() }.onFailure { Messages.showErrorDialog(project, it.message, title) }
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Messages.showErrorDialog(project, e.message, title)
+            }
             refreshBanners()
         }
     }
@@ -270,7 +277,13 @@ internal fun flushPlatformEdits(project: Project, session: WorkspaceSession): Se
     runWithModalProgressBlocking(project, "Saving DATAMIMIC files to the platform") {
         withTimeoutOrNull(UPLOAD_WAIT_MS) {
             // WHY: agents write files the IDE may not have noticed yet; a pass reads the disk itself.
-            runCatching { session.sync.syncNow() }
+            try {
+                session.sync.syncNow()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The unsaved paths below tell the caller this sync did not finish.
+            }
             session.sync.awaitUploads()
         }
     }

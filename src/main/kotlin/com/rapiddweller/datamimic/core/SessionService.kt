@@ -65,7 +65,10 @@ class SessionService(
         if (ended) onExpired()
     }
 
-    fun login(origin: PlatformOrigin, email: String, password: String): StoredSession {
+    fun login(origin: PlatformOrigin, email: String, password: String): StoredSession = login(origin, email, password, null)
+
+    /** Runs [beforeReplace] after validating the new cookie while [current] is still the old session. */
+    fun login(origin: PlatformOrigin, email: String, password: String, beforeReplace: (() -> Unit)?): StoredSession {
         val response = try {
             http.sendPlatformRequest(
                 origin,
@@ -90,6 +93,15 @@ class SessionService(
             ?: throw IllegalStateException("The platform accepted the sign-in but returned no session.")
         val previous = current()
         val session = StoredSession(origin, sessionId)
+        try {
+            beforeReplace?.invoke()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            revoke(session)
+            throw e
+        } catch (e: Exception) {
+            revoke(session)
+            throw e
+        }
         store(session)
         previous?.let(::revoke)
         return session
@@ -102,7 +114,7 @@ class SessionService(
         return revoke(session)
     }
 
-    private fun revoke(session: StoredSession): Boolean = runCatching {
+    private fun revoke(session: StoredSession): Boolean = try {
         http.sendPlatformRequest(
             session.origin,
             HttpMethod.POST,
@@ -110,7 +122,12 @@ class SessionService(
             RequestBody.Empty,
             mapOf(PlatformHeader.COOKIE to "$SESSION_COOKIE=${session.sessionId}"),
         ).orThrow(HttpMethod.POST, LOGOUT_PATH)
-    }.isSuccess
+        true
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        false
+    }
 
     private companion object {
         const val LOGIN_PATH = "/api/v2/session/login"
