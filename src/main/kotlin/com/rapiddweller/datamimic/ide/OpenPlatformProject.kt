@@ -113,8 +113,7 @@ internal suspend fun openPlatformProject(project: Project?, target: PlatformProj
         withModalProgress(owner(project), "Downloading ${target.name}", Cancellation.cancellable()) {
             withContext(Dispatchers.IO) {
                 val folder = ProjectFolder(root)
-                if (!folder.isProjectFolder()) folder.writeIdentity(FolderIdentity(origin, target.id, target.name))
-                platform.workspace(target.id, folder).sync.syncNow()
+                platform.workspace(target.id, folder, FolderIdentity(origin, target.id, target.name)).sync.syncNow()
             }
         }
         openDownloadedProject(root)

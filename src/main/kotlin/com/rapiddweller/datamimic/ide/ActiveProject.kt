@@ -27,6 +27,7 @@ import com.rapiddweller.datamimic.core.mcp.McpAgent
 import com.rapiddweller.datamimic.core.mcp.Publication
 import com.rapiddweller.datamimic.core.process.findOnPath
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
+import com.rapiddweller.datamimic.core.workspace.FolderClaimException
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import com.rapiddweller.datamimic.core.workspace.WorkspaceSession
 import com.rapiddweller.datamimic.core.workspace.WorkspaceUpdate
@@ -76,11 +77,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
                 platform.state.collect { auth ->
                     when (auth) {
                         is AuthState.SignedIn -> if (auth.origin == identity.origin) {
-                            try {
-                                connect(identity)
-                            } catch (e: IllegalStateException) {
-                                reconnectWhenDrained(identity)
-                            }
+                            connectOrNotify(identity)
                         } else {
                             reconnect?.cancel()
                             renewal?.cancel()
@@ -134,7 +131,17 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
         reconnect = scope.launch {
             platform.workspaceShutdown(target.projectId)?.await()
             val signedIn = platform.state.value as? AuthState.SignedIn ?: return@launch
-            if (signedIn.origin == target.origin) connect(target)
+            if (signedIn.origin == target.origin) connectOrNotify(target)
+        }
+    }
+
+    private suspend fun connectOrNotify(target: FolderIdentity) {
+        try {
+            connect(target)
+        } catch (e: FolderClaimException) {
+            notify(e.message ?: e.javaClass.simpleName, NotificationType.ERROR)
+        } catch (e: IllegalStateException) {
+            reconnectWhenDrained(target)
         }
     }
 

@@ -9,10 +9,14 @@ import com.rapiddweller.datamimic.core.PlatformProject
 import com.rapiddweller.datamimic.core.json
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.io.IOException
+import java.nio.channels.FileChannel
+import java.nio.channels.OverlappingFileLockException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 
 /** Which platform project a folder is the local copy of. The folder name is only for people; this is the identity. */
@@ -22,6 +26,14 @@ data class FolderIdentity(
     @SerialName("project_id") val projectId: String,
     @SerialName("project_name") val projectName: String,
 )
+
+sealed class FolderClaimException(message: String, cause: Throwable? = null) : IllegalStateException(message, cause)
+
+class FolderInUseException(root: Path) :
+    FolderClaimException("$root is already being synced by another IDE.")
+
+class FolderClaimFailedException(root: Path, cause: Throwable) :
+    FolderClaimException("Cannot lock $root for DATAMIMIC sync: ${cause.message ?: cause.javaClass.simpleName}", cause)
 
 /** The platform version a local file was downloaded or uploaded as. */
 @Serializable
@@ -39,6 +51,55 @@ class ProjectFolder(root: Path) {
     private val identityFile: Path = metaDir.resolve("workspace.json")
 
     fun isProjectFolder(): Boolean = identity() != null
+
+    /** Claims this folder until its registry entry has finished shutdown; the OS releases it if the process crashes. */
+    fun claimForSync(): AutoCloseable {
+        val lock = try {
+            Files.createDirectories(metaDir)
+            check(!Files.isSymbolicLink(metaDir) && Files.isDirectory(metaDir, LinkOption.NOFOLLOW_LINKS)) { "DATAMIMIC metadata is not a directory." }
+            val lock = metaDir.resolve(SYNC_LOCK)
+            check(!Files.exists(lock, LinkOption.NOFOLLOW_LINKS) || Files.isRegularFile(lock, LinkOption.NOFOLLOW_LINKS)) { "DATAMIMIC sync lock is not a regular file." }
+            metaDir.toRealPath().resolve(SYNC_LOCK)
+        } catch (e: Exception) {
+            throw FolderClaimFailedException(root, e)
+        }
+        if (!claimedLocks.add(lock)) throw FolderInUseException(root)
+        var channel: FileChannel? = null
+        try {
+            val opened = FileChannel.open(lock, StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)
+            channel = opened
+            if (opened.tryLock() == null) throw FolderInUseException(root)
+            return object : AutoCloseable {
+                override fun close() {
+                    opened.close()
+                    claimedLocks.remove(lock)
+                }
+            }
+        } catch (e: FolderInUseException) {
+            runCatching { channel?.close() }
+            claimedLocks.remove(lock)
+            throw e
+        } catch (_: OverlappingFileLockException) {
+            runCatching { channel?.close() }
+            claimedLocks.remove(lock)
+            throw FolderInUseException(root)
+        } catch (e: Exception) {
+            runCatching { channel?.close() }
+            claimedLocks.remove(lock)
+            throw FolderClaimFailedException(root, e)
+        }
+    }
+
+    /** Writes the first identity only while the caller owns this folder's sync claim. */
+    fun initializeIdentity(identity: FolderIdentity) {
+        val existing = identity()
+        if (existing == null) {
+            check(!hasIdentityEntry()) { "$root has no usable DATAMIMIC identity." }
+            writeIdentity(identity)
+        } else {
+            check(existing.origin == identity.origin && existing.projectId == identity.projectId) { "$root belongs to another DATAMIMIC project." }
+        }
+    }
 
     fun identity(): FolderIdentity? =
         if (hasSafeIdentityFile()) runCatching { json.decodeFromString<FolderIdentity>(Files.readString(identityFile)) }.getOrNull() else null
@@ -82,6 +143,8 @@ class ProjectFolder(root: Path) {
 
     companion object {
         const val META_DIR = ".datamimic"
+        private const val SYNC_LOCK = "sync.lock"
+        private val claimedLocks = java.util.concurrent.ConcurrentHashMap.newKeySet<Path>()
 
         /** Folders and files of the IDE, VCS and agents that live next to the project files but are never synced. */
         private val LOCAL_ONLY_NAMES = setOf(META_DIR, ".idea", ".git", ".junie", ".claude", ".vscode", ".DS_Store")
