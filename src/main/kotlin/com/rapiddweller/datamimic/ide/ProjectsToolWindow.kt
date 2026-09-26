@@ -5,6 +5,7 @@
 package com.rapiddweller.datamimic.ide
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -16,8 +17,13 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.openapi.wm.WelcomeScreen
+import com.intellij.openapi.wm.WelcomeScreenTab
+import com.intellij.openapi.wm.WelcomeTabFactory
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
@@ -29,12 +35,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.Icon
+import javax.swing.JComponent
+import javax.swing.JLabel
 import javax.swing.JTree
+import javax.swing.SwingConstants
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -56,37 +68,58 @@ class ToolWindowScope(val scope: CoroutineScope)
 
 class ProjectsToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        toolWindow.contentManager.addContent(ContentFactory.getInstance().createContent(ProjectsPanel(project), "Projects", false))
+        val panel = ProjectsPanel(project, project.getService(ToolWindowScope::class.java).scope)
+        toolWindow.contentManager.addContent(ContentFactory.getInstance().createContent(panel, "Projects", false))
     }
 }
 
-internal class ProjectsPanel(private val project: Project) : SimpleToolWindowPanel(true, true) {
+/** The DATAMIMIC entry of the Welcome screen, to sign in and open a platform project before any project is open. */
+class DatamimicWelcomeTabFactory : WelcomeTabFactory {
+    override fun createWelcomeTabs(welcomeScreen: WelcomeScreen, parentDisposable: Disposable): List<WelcomeScreenTab> = listOf(object : WelcomeScreenTab {
+        private val component by lazy {
+            val platform = DatamimicPlatform.getInstance()
+            val scope = CoroutineScope(SupervisorJob(platform.scope.coroutineContext.job))
+            Disposer.register(parentDisposable) { scope.cancel() }
+            ProjectsPanel(null, scope)
+        }
+        private val key = JLabel("DATAMIMIC", IconLoader.getIcon("/icons/datamimic.svg", DatamimicWelcomeTabFactory::class.java), SwingConstants.LEADING)
+
+        override fun getKeyComponent(parentComponent: JComponent): JComponent = key
+
+        override fun getAssociatedComponent(): JComponent = component
+    })
+}
+
+/** Sign-in and the platform's projects; [project] is null on the Welcome screen. */
+internal class ProjectsPanel(private val project: Project?, private val scope: CoroutineScope) : SimpleToolWindowPanel(true, true) {
     private val platform = DatamimicPlatform.getInstance()
-    private val scope = project.getService(ToolWindowScope::class.java).scope
-    private val active = project.activeProject()
+    private val active = project?.activeProject()
+    internal val projectActionsVisible = project != null
     private val root = DefaultMutableTreeNode()
     private val model = DefaultTreeModel(root)
     private val tree = Tree(model).apply {
         isRootVisible = false
         showsRootHandles = false
-        cellRenderer = NodeRenderer { active.identity?.projectId }
+        cellRenderer = NodeRenderer { active?.identity?.projectId }
     }
     private val operations = PlatformOperations(project, scope, active, ::selectedNode)
+    internal val toolbarActions = DefaultActionGroup(
+        action("Sign In…", AllIcons.General.User, { it is AuthState.SignedOut }, ::signIn),
+        action("Refresh", AllIcons.Actions.Refresh, ::isSignedIn) { loadProjects() },
+    )
+    internal val contextActions = DefaultActionGroup(operations.openProject)
     private var loadJob: Job? = null
 
     init {
-        val toolbarActions = DefaultActionGroup(
-            action("Sign In…", AllIcons.General.User, { it is AuthState.SignedOut }, ::signIn),
-            action("Refresh", AllIcons.Actions.Refresh, ::isSignedIn) { loadProjects() },
-            Separator.getInstance(),
-            operations.generate,
-            Separator.getInstance(),
-            action("Sign Out", AllIcons.Actions.Exit, ::isSignedIn) { operations.signOut() },
-        )
+        // WHY: generating and agent configuration act on a project window, which the Welcome screen does not have.
+        if (projectActionsVisible) {
+            toolbarActions.addAll(Separator.getInstance(), operations.generate)
+            contextActions.addAll(operations.generate, operations.copyAiAssistantConfiguration)
+        }
+        toolbarActions.addAll(Separator.getInstance(), action("Sign Out", AllIcons.Actions.Exit, ::isSignedIn) { operations.signOut() })
         toolbar = ActionManager.getInstance().createActionToolbar("DatamimicProjects", toolbarActions, true)
             .also { it.targetComponent = this }
             .component
-        val contextActions = DefaultActionGroup(operations.openProject, operations.generate, operations.copyAiAssistantConfiguration)
         PopupHandler.installPopupMenu(tree, contextActions, "DatamimicProjectsPopup")
         tree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(event: MouseEvent) {
