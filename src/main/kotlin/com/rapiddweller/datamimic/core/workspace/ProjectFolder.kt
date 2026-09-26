@@ -38,10 +38,10 @@ class ProjectFolder(root: Path) {
     val tempDir: Path = metaDir.resolve("tmp")
     private val identityFile: Path = metaDir.resolve("workspace.json")
 
-    fun isProjectFolder(): Boolean = Files.isRegularFile(identityFile)
+    fun isProjectFolder(): Boolean = identity() != null
 
     fun identity(): FolderIdentity? =
-        runCatching { json.decodeFromString<FolderIdentity>(Files.readString(identityFile)) }.getOrNull()
+        if (hasSafeIdentityFile()) runCatching { json.decodeFromString<FolderIdentity>(Files.readString(identityFile)) }.getOrNull() else null
 
     fun writeIdentity(identity: FolderIdentity) =
         writeAtomically(identityFile, json.encodeToString(FolderIdentity.serializer(), identity).toByteArray(), metaDir)
@@ -117,17 +117,29 @@ class ProjectFolder(root: Path) {
             }
             val name = safeName(project.name)
             val candidates = listOf("$name-${safeName(project.id).take(8)}", "$name-${safeName(project.id)}").map(platformDir::resolve)
-            return candidates.firstOrNull { ProjectFolder(it).isFreeFor(origin, project.id) } ?: candidates.last()
+            return candidates.firstOrNull { ProjectFolder(it).isFreeFor(origin, project.id) }
+                ?: error("No unused local folder is available for ${project.id} on ${origin.value}.")
         }
 
         private fun safeName(value: String): String = value.replace(Regex("[^A-Za-z0-9._ -]"), "_").trim().ifEmpty { "project" }.take(60)
     }
 
     private fun isFreeFor(origin: PlatformOrigin, projectId: String): Boolean {
-        if (!Files.exists(root)) return true
-        val identity = identity() ?: return Files.list(root).use { it.findAny().isEmpty }
+        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return true
+        if (Files.isSymbolicLink(root) || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return false
+        val identity = identity()
+        if (identity == null && hasIdentityEntry()) return false
+        if (identity == null) return Files.list(root).use { it.findAny().isEmpty }
         return identity.origin == origin && identity.projectId == projectId
     }
+
+    private fun hasSafeIdentityFile(): Boolean =
+        !Files.isSymbolicLink(metaDir) &&
+            !Files.isSymbolicLink(identityFile) &&
+            Files.isRegularFile(identityFile, LinkOption.NOFOLLOW_LINKS)
+
+    private fun hasIdentityEntry(): Boolean =
+        Files.isSymbolicLink(metaDir) || Files.exists(identityFile, LinkOption.NOFOLLOW_LINKS)
 }
 
 /**

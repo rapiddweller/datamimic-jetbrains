@@ -107,9 +107,9 @@ internal suspend fun signInInteractively(project: Project?): Boolean {
 internal suspend fun openPlatformProject(project: Project?, target: PlatformProject) {
     val platform = DatamimicPlatform.getInstance()
     val origin = (platform.state.value as? AuthState.SignedIn)?.origin ?: return
-    val root = ProjectFolder.locationFor(PROJECTS_HOME, origin, target)
-    if (ProjectUtil.findAndFocusExistingProjectForPath(root) != null) return
     try {
+        val root = ProjectFolder.locationFor(PROJECTS_HOME, origin, target)
+        if (ProjectUtil.findAndFocusExistingProjectForPath(root) != null) return
         withModalProgress(owner(project), "Downloading ${target.name}", Cancellation.cancellable()) {
             withContext(Dispatchers.IO) {
                 val folder = ProjectFolder(root)
@@ -117,13 +117,13 @@ internal suspend fun openPlatformProject(project: Project?, target: PlatformProj
                 platform.workspace(target.id, folder).sync.syncNow()
             }
         }
+        openDownloadedProject(root)
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         LOG.warn("Downloading ${target.id} failed: $e")
         return Messages.showErrorDialog(project, e.message ?: e.javaClass.simpleName, "Cannot Open Project")
     }
-    openDownloadedProject(root)
 }
 
 /** Opens without blocking the Welcome screen's event loop. */
