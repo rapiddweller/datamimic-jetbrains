@@ -7,6 +7,7 @@
 ## [0.2.1]
 
 - Keep project opening alive when the Welcome screen closes, so the IDE no longer returns to Welcome.
+- Route Junie project requests through DATAMIMIC MCP and stop instead of falling back to local project tools.
 
 ## [0.2.0]
 

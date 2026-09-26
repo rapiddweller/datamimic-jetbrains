@@ -5,7 +5,12 @@
 package com.rapiddweller.datamimic.core.mcp
 
 /** Outcome of pointing the agents at a project, for the notification the user sees. */
-class Publication(val server: McpServer?, val connected: List<String>, val failures: List<String>)
+class Publication(
+    val server: McpServer?,
+    val connected: List<String>,
+    val failures: List<String>,
+    val warnings: List<String> = emptyList(),
+)
 
 /** The platform project of one IDE window and the agents pointed at its MCP server. Blocking; call off the UI thread. */
 class AgentConnection(
@@ -46,6 +51,7 @@ class AgentConnection(
             current,
             outcomes.filterValues { it.isSuccess }.keys.map(McpAgent::displayName),
             outcomes.mapNotNull { (agent, outcome) -> outcome.exceptionOrNull()?.let { "${agent.displayName}: ${it.message}" } },
+            outcomes.flatMap { (agent, outcome) -> outcome.getOrNull().orEmpty().map { "${agent.displayName}: $it" } },
         )
     }
 

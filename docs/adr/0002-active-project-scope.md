@@ -34,12 +34,14 @@ flowchart LR
 - Registration, per agent:
   - **Claude Code:** `claude mcp add --scope local` in the project directory. The token stays in the user's Claude
     configuration, not in the repository.
-  - **Junie:** the project's `.junie/mcp/mcp.json`, only the `datamimic-platform` entry. The file is added to
-    `.git/info/exclude`; if Git already tracks it, no token is written.
+  - **Junie:** the project's `.junie/mcp/mcp.json`, only the `datamimic-platform` entry, plus the project-local
+    `.junie/rules/datamimic.md` routing rule. Both files stay out of Git; if Git already tracks the token-bearing
+    config, no token is written. Existing guidance is never overwritten.
   - **AI Assistant:** no documented API or file exists, so *Copy MCP Configuration for AI Assistant* hands over the
     entry for *Add → As JSON*. It is not removed automatically.
-- Closing the window or signing out removes the registrations. An expired session removes them too; local edits stay
-  in the folder and upload after signing in again. Closing a window disconnects synchronously (at most 10 s).
+- Closing the window or signing out removes the registrations. The credential-free Junie routing rule remains because
+  the folder is still a DATAMIMIC Platform project. An expired session removes registrations too; local edits stay in
+  the folder and upload after signing in again. Closing a window disconnects synchronously (at most 10 s).
 - If the token cannot be created, the agents are disconnected, so they never point at a revoked token.
 
 ## Consequences

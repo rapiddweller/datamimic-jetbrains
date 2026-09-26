@@ -40,5 +40,10 @@ class AgentDiscoveryTest {
         assertEquals(listOf("Junie"), publication.connected)
         val config = json.parseToJsonElement(Files.readString(projectDir.resolve(".junie/mcp/mcp.json"))).jsonObject
         assertEquals("https://dm.example/mcp", config.getValue("mcpServers").jsonObject.getValue("datamimic-platform").jsonObject.getValue("url").jsonPrimitive.content)
+        val rule = Files.readString(projectDir.resolve(".junie/rules/datamimic.md"))
+        assertTrue(rule.contains("only `datamimic_*` MCP tools"))
+        assertTrue(rule.contains("Begin with an available read-only `datamimic_*` tool"))
+        assertTrue(rule.contains("stop and report"))
+        assertTrue(rule.contains("Do not fall back to local files"))
     }
 }

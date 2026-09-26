@@ -14,8 +14,9 @@ class AgentConnectionTest {
     private val agent = object : McpAgent {
         override val displayName = "Agent"
 
-        override fun register(server: McpServer) {
+        override fun register(server: McpServer): List<String> {
             events += "register ${server.url}"
+            return emptyList()
         }
 
         override fun unregister() {
@@ -59,6 +60,22 @@ class AgentConnectionTest {
         connection.leave()
 
         assertEquals(emptyList<String>(), events)
+    }
+
+    @Test
+    fun `a registered agent can report a non-fatal setup warning`() {
+        val warningAgent = object : McpAgent {
+            override val displayName = "Warning Agent"
+            override fun register(server: McpServer) = listOf("project guidance overrides routing")
+            override fun unregister() = Unit
+        }
+        val warningConnection = AgentConnection({}, {}, { McpServer(it, emptyMap(), Instant.EPOCH) }, { listOf(warningAgent) })
+
+        val publication = warningConnection.connect("A")
+
+        assertEquals(listOf("Warning Agent"), publication.connected)
+        assertEquals(listOf("Warning Agent: project guidance overrides routing"), publication.warnings)
+        assertEquals(emptyList<String>(), publication.failures)
     }
 
     @Test

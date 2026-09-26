@@ -24,7 +24,7 @@ data generation, and MCP access for IDE agents.
 - Each window is one platform project, like in the platform UI; it scopes files, locks and IDE agents
   ([ADR 0002](docs/adr/0002-active-project-scope.md)).
 - IDE agents are connected to the window's project MCP server automatically: Claude Code (local scope) and Junie
-  (the folder's `.junie/mcp/mcp.json`). AI Assistant: *Copy MCP Configuration for AI Assistant*.
+  (the folder's `.junie/mcp/mcp.json` and a project-local routing rule). AI Assistant: *Copy MCP Configuration for AI Assistant*.
 - Server-side edit locks: showing a file takes its lock, a banner explains when someone else holds it, and
   *Take over…* overrides it after confirmation.
 - Completion and checks for the folder's XML files from the platform's language server
@@ -33,6 +33,18 @@ data generation, and MCP access for IDE agents.
 - *Generate Data…* on the window's project: runs on the platform and shows the log and a preview per product.
 
 Local DATAMIMIC CE support is not part of this version; it follows once CE authoring is reworked.
+
+## Junie routing
+
+The plugin adds `.junie/rules/datamimic.md` for a connected DATAMIMIC project. It routes DATAMIMIC Platform project
+requests to a read-only `datamimic_*` MCP tool first and forbids a fallback to local project content when those tools
+are unavailable. The detailed workflow stays in Platform `MCP_SERVER_INSTRUCTIONS`.
+
+Junie must use its default Guidelines path. A custom Guidelines path bypasses project rules and cannot be detected
+through a stable public JetBrains API; clear that setting or include the same routing manually. An existing
+`.junie/AGENTS.md` is exclusive guidance, so the plugin connects MCP, warns about the conflict, and leaves the file
+unchanged. The credential-free routing rule remains when the project disconnects; only the token-bearing MCP entry
+is removed.
 
 ## Architecture
 

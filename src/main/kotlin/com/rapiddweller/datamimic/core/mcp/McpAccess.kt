@@ -136,8 +136,8 @@ interface McpAgent {
     /** Shown to the user, e.g. in "Connected: Claude Code, Junie". */
     val displayName: String
 
-    /** Blocking; call off the UI thread. Replaces an earlier registration of this IDE window. */
-    fun register(server: McpServer)
+    /** Blocking; call off the UI thread. Replaces an earlier registration and returns non-fatal setup warnings. */
+    fun register(server: McpServer): List<String>
 
     /** Blocking; call off the UI thread. */
     fun unregister()
