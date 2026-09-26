@@ -4,6 +4,7 @@
 
 package com.rapiddweller.datamimic.ide
 
+import com.intellij.ide.impl.OpenProjectTask
 import com.intellij.ide.impl.ProjectUtil
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -63,7 +64,10 @@ class OpenPlatformProjectAction : DumbAwareAction() {
                 .setTitle("Open DATAMIMIC Project")
                 .setRenderer(textListCellRenderer { it?.name.orEmpty() })
                 .setNamerForFiltering { it.name }
-                .setItemChosenCallback { chosen -> platform.scope.launch(Dispatchers.EDT) { openPlatformProject(project, chosen) } }
+                .setItemChosenCallback { chosen ->
+                    // WHY: opening the project may close the Welcome screen that supplied this action.
+                    platform.scope.launch(Dispatchers.EDT) { openPlatformProject(project, chosen) }
+                }
                 .createPopup()
                 .showInFocusCenter()
         }
@@ -120,8 +124,13 @@ internal suspend fun openPlatformProject(project: Project?, target: PlatformProj
         LOG.warn("Downloading ${target.id} failed: $e")
         return Messages.showErrorDialog(project, e.message ?: e.javaClass.simpleName, "Cannot Open Project")
     }
-    // WHY: the OpenProjectTask builder compiles an internal constructor into the plugin, which newer IDEs removed.
-    ProjectUtil.openOrImport(root, null, true)
+    openDownloadedProject(root)
 }
+
+/** Opens without blocking the Welcome screen's event loop. */
+internal suspend fun openDownloadedProject(root: Path) =
+    ProjectUtil.openOrImportAsync(root, downloadedProjectTask())
+
+internal fun downloadedProjectTask(): OpenProjectTask = OpenProjectTask.build().withForceOpenInNewFrame(true)
 
 private fun owner(project: Project?): ModalTaskOwner = project?.let(ModalTaskOwner::project) ?: ModalTaskOwner.guess()
