@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import java.io.IOException
 
 enum class UploadFailure {
@@ -46,6 +47,7 @@ class FileSaver(
     private val scope: CoroutineScope,
     private val onStateChanged: (path: String) -> Unit,
     private val onIdle: (path: String) -> Unit,
+    private val accepting: () -> Boolean = { true },
 ) {
     private val unconfirmed = mutableMapOf<String, ByteArray>()
 
@@ -73,6 +75,7 @@ class FileSaver(
     fun isUploading(path: String): Boolean = path in running
 
     fun save(path: String, bytes: ByteArray) {
+        if (!accepting()) return
         synchronized(this) { unconfirmed[path] = bytes }
         upload(path)
     }
@@ -81,6 +84,7 @@ class FileSaver(
 
     /** Uploads again only files whose failed upload may succeed after the stream comes back. */
     fun retryTransientFailures() {
+        if (!accepting()) return
         val failed = synchronized(this) {
             running.forEach(recoveryRequested::add)
             retryableFailures.toList()
@@ -111,6 +115,7 @@ class FileSaver(
     }
 
     private fun upload(path: String) {
+        if (!accepting()) return
         synchronized(this) {
             if (!running.add(path)) return
             retryableFailures.remove(path)
@@ -143,7 +148,9 @@ class FileSaver(
                 // WHY: decided together with leaving `running`, so a save that arrived after the loop's last check is not stranded.
                 val again = synchronized(this@FileSaver) {
                     running.remove(path)
-                    if (!failed) {
+                    if (!isActive) {
+                        false
+                    } else if (!failed) {
                         states.remove(path)
                         retryableFailures.remove(path)
                         recoveryRequested.remove(path)
@@ -154,7 +161,7 @@ class FileSaver(
                     !failed && path in unconfirmed
                 }
                 onStateChanged(path)
-                if (recover || again) upload(path) else if (!needsLease(path)) onIdle(path)
+                if ((recover || again) && isActive) upload(path) else if (!needsLease(path)) onIdle(path)
             }
         }
     }

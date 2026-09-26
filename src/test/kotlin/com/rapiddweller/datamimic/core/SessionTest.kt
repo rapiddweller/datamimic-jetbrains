@@ -15,6 +15,7 @@ import java.net.http.HttpClient
 
 class SessionTest {
     private val platform = FakePlatform()
+    private val otherPlatform = FakePlatform()
     private var stored: String? = null
     private val http = HttpClient.newHttpClient()
     private var expiredCalls = 0
@@ -22,7 +23,10 @@ class SessionTest {
     private val transport = PlatformHttp(http, sessions, "binding-1")
 
     @After
-    fun tearDown() = platform.close()
+    fun tearDown() {
+        platform.close()
+        otherPlatform.close()
+    }
 
     @Test
     fun `login stores only the session cookie and authenticates later requests`() {
@@ -41,6 +45,50 @@ class SessionTest {
         assertEquals(401, error.status)
         assertTrue(error.message!!.startsWith("Incorrect email or password"))
         assertNull(sessions.current())
+    }
+
+    @Test
+    fun `an invalid replacement leaves the current session and its work untouched`() {
+        val first = sessions.login(platform.origin, "ada@example.com", "secret")
+        var beforeReplaceCalled = false
+
+        assertThrows(PlatformException::class.java) {
+            sessions.login(otherPlatform.origin, "ada@example.com", "wrong") { beforeReplaceCalled = true }
+        }
+
+        assertEquals(first, sessions.current())
+        assertTrue(!beforeReplaceCalled)
+        assertEquals(emptyList<String>(), platform.revokedSessions)
+    }
+
+    @Test
+    fun `replacement finalizes against the old session before storing the new one`() {
+        val first = sessions.login(platform.origin, "ada@example.com", "secret")
+        otherPlatform.sessionId = "session-b"
+        var duringFinalization: StoredSession? = null
+
+        val replacement = sessions.login(otherPlatform.origin, "ada@example.com", "secret") {
+            duringFinalization = sessions.current()
+            assertEquals("ada@example.com", AccountApi(transport).me().email)
+        }
+
+        assertEquals(first, duringFinalization)
+        assertEquals(replacement, sessions.current())
+        assertEquals(listOf("session-1"), platform.revokedSessions)
+    }
+
+    @Test
+    fun `a failed replacement hook revokes the new session and preserves the old one`() {
+        val first = sessions.login(platform.origin, "ada@example.com", "secret")
+        otherPlatform.sessionId = "session-b"
+
+        assertThrows(IllegalStateException::class.java) {
+            sessions.login(otherPlatform.origin, "ada@example.com", "secret") { error("drain failed") }
+        }
+
+        assertEquals(first, sessions.current())
+        assertEquals(emptyList<String>(), platform.revokedSessions)
+        assertEquals(listOf("session-b"), otherPlatform.revokedSessions)
     }
 
     @Test
