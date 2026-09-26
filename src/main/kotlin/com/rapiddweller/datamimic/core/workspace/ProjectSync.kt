@@ -329,10 +329,10 @@ class ProjectSync(
     }
 
     private fun write(path: String, file: Path, content: FileContent) {
-        bases.set(path, FileBase(content.etag ?: versionOf(path), sha256(content.bytes)))
-        // WHY: the base is recorded first, so the IDE's echo of this write is recognized as no change.
         if (Files.exists(file)) file.toFile().setWritable(true)
         writeAtomically(file, content.bytes, folder.tempDir)
+        // WHY: a base ahead of the file can make a later pass upload stale local bytes over this platform version.
+        bases.set(path, FileBase(content.etag ?: versionOf(path), sha256(content.bytes)))
         // WHY: agents edit files directly; a read-only file tells them the platform will not take their change.
         if (isReadOnly(path)) file.toFile().setWritable(false)
     }

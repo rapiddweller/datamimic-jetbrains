@@ -20,6 +20,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeFalse
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -272,6 +273,26 @@ class ProjectSyncTest {
         syncNow()
         assertEquals("<setup theirs='1'/>", read(PATH))
         assertEquals("etag-2", session.bases.get(PATH)?.etag)
+    }
+
+    @Test
+    fun `a failed download write keeps the previous base`() {
+        syncNow()
+        val previousBase = checkNotNull(session.bases.get(PATH))
+        platform.files[PATH] = "<setup theirs='1'/>" to "etag-2"
+        val parent = file(PATH).parent
+        assertTrue(parent.toFile().setWritable(false))
+        assumeFalse("filesystem must enforce a non-writable directory", Files.isWritable(parent))
+
+        try {
+            session.refreshTree()
+            syncNow()
+        } finally {
+            file(PATH).parent.toFile().setWritable(true)
+        }
+
+        assertEquals(previousBase, session.bases.get(PATH))
+        assertEquals("<setup/>", read(PATH))
     }
 
     @Test
