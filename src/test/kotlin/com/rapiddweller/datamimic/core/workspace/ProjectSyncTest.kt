@@ -395,6 +395,28 @@ class ProjectSyncTest {
     }
 
     @Test
+    fun `occupied candidate folders are not reused or relabeled`() {
+        val home = temp.newFolder("home").toPath()
+        val origin = PlatformOrigin("https://platform.example.com:8443")
+        val project = PlatformProject("0123456789abcdef", "Customer Data: v2")
+        val platformDir = home.resolve("platform.example.com_8443")
+        val short = platformDir.resolve("Customer Data_ v2-01234567")
+        val full = platformDir.resolve("Customer Data_ v2-0123456789abcdef")
+        ProjectFolder(short).writeIdentity(FolderIdentity(origin, "other-project", "Other"))
+        Files.writeString(short.resolve("draft.xml"), "short edit")
+        Files.createDirectories(full.resolve(ProjectFolder.META_DIR))
+        Files.writeString(full.resolve(ProjectFolder.META_DIR).resolve("workspace.json"), "not valid json")
+        Files.writeString(full.resolve("draft.xml"), "full edit")
+
+        assertThrows(IllegalStateException::class.java) { ProjectFolder.locationFor(home, origin, project) }
+
+        assertEquals("short edit", Files.readString(short.resolve("draft.xml")))
+        assertEquals("full edit", Files.readString(full.resolve("draft.xml")))
+        assertEquals("other-project", ProjectFolder(short).identity()?.projectId)
+        assertNull(ProjectFolder(full).identity())
+    }
+
+    @Test
     fun `a platform rename keeps the existing project folder`() {
         val home = temp.newFolder("home").toPath()
         val origin = PlatformOrigin("https://platform.example.com:8443")
@@ -440,6 +462,48 @@ class ProjectSyncTest {
         val linked = runCatching { Files.createSymbolicLink(link, target); true }.getOrDefault(false)
         assumeTrue("file system supports symbolic links", linked)
 
+        assertEquals(platformDir.resolve("Renamed-01234567"), ProjectFolder.locationFor(home, origin, project))
+    }
+
+    @Test
+    fun `an identity below symlinked metadata is not reused`() {
+        val home = temp.newFolder("home").toPath()
+        val origin = PlatformOrigin("https://platform.example.com:8443")
+        val project = PlatformProject("0123456789abcdef", "Renamed")
+        val outside = temp.newFolder("outside").toPath()
+        ProjectFolder(outside).writeIdentity(FolderIdentity(origin, project.id, "Older"))
+        val platformDir = home.resolve("platform.example.com_8443")
+        val folder = platformDir.resolve("old-name")
+        Files.createDirectories(folder)
+        val linked = runCatching { Files.createSymbolicLink(folder.resolve(ProjectFolder.META_DIR), outside.resolve(ProjectFolder.META_DIR)); true }.getOrDefault(false)
+        assumeTrue("file system supports symbolic links", linked)
+
+        assertNull(ProjectFolder(folder).identity())
+        assertFalse(ProjectFolder(folder).isProjectFolder())
+        assertEquals(platformDir.resolve("Renamed-01234567"), ProjectFolder.locationFor(home, origin, project))
+    }
+
+    @Test
+    fun `a symlinked identity file is not reused`() {
+        val home = temp.newFolder("home").toPath()
+        val origin = PlatformOrigin("https://platform.example.com:8443")
+        val project = PlatformProject("0123456789abcdef", "Renamed")
+        val outside = temp.newFolder("outside").toPath()
+        ProjectFolder(outside).writeIdentity(FolderIdentity(origin, project.id, "Older"))
+        val platformDir = home.resolve("platform.example.com_8443")
+        val folder = platformDir.resolve("old-name")
+        Files.createDirectories(folder.resolve(ProjectFolder.META_DIR))
+        val linked = runCatching {
+            Files.createSymbolicLink(
+                folder.resolve(ProjectFolder.META_DIR).resolve("workspace.json"),
+                outside.resolve(ProjectFolder.META_DIR).resolve("workspace.json"),
+            )
+            true
+        }.getOrDefault(false)
+        assumeTrue("file system supports symbolic links", linked)
+
+        assertNull(ProjectFolder(folder).identity())
+        assertFalse(ProjectFolder(folder).isProjectFolder())
         assertEquals(platformDir.resolve("Renamed-01234567"), ProjectFolder.locationFor(home, origin, project))
     }
 
