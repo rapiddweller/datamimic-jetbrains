@@ -64,8 +64,8 @@ flowchart LR
 - **Read-only platform files** (shared from global projects) are written read-only and restored if changed.
 - **Safety at the boundary.** Platform paths are checked segment by segment, must stay inside the folder and must
   not pass through a link. Names that differ only in case are skipped and reported.
-- **Writes** go to a temporary file in `.datamimic/tmp` and are moved into place, after the base was recorded, so the
-  IDE's refresh of a download is recognized as no change.
+- **Writes** go to a temporary file in `.datamimic/tmp` and are moved into place before their base is recorded. A
+  failed local write therefore never advances the known platform version.
 
 ## Consequences
 
