@@ -15,7 +15,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.platform.ide.progress.ModalTaskOwner
-import com.intellij.platform.ide.progress.TaskCancellation
 import com.intellij.platform.ide.progress.withModalProgress
 import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 import com.rapiddweller.datamimic.core.PlatformProject
@@ -44,12 +43,12 @@ class OpenPlatformProjectAction : DumbAwareAction() {
         val project = e.project
         val platform = DatamimicPlatform.getInstance()
         platform.scope.launch(Dispatchers.EDT) {
-            val auth = withModalProgress(owner(project), "Checking DATAMIMIC sign-in", TaskCancellation.cancellable()) {
+            val auth = withModalProgress(owner(project), "Checking DATAMIMIC sign-in", Cancellation.cancellable()) {
                 platform.state.first { it != AuthState.Unknown }
             }
             if (auth !is AuthState.SignedIn && !signInInteractively(project)) return@launch
             val projects = try {
-                withModalProgress(owner(project), "Loading DATAMIMIC projects", TaskCancellation.cancellable()) {
+                withModalProgress(owner(project), "Loading DATAMIMIC projects", Cancellation.cancellable()) {
                     withContext(Dispatchers.IO) { platform.projects.list() }
                 }
             } catch (e: CancellationException) {
@@ -86,7 +85,7 @@ internal suspend fun signInInteractively(project: Project?): Boolean {
         if (!dialog.showAndGet()) return false
         val input = dialog.input()
         try {
-            withModalProgress(owner(project), "Signing in to DATAMIMIC", TaskCancellation.cancellable()) {
+            withModalProgress(owner(project), "Signing in to DATAMIMIC", Cancellation.cancellable()) {
                 withContext(Dispatchers.IO) { platform.signIn(input) }
             }
             LOG.info("Signed in to ${input.origin.value}")
@@ -111,7 +110,7 @@ internal suspend fun openPlatformProject(project: Project?, target: PlatformProj
     val root = ProjectFolder.locationFor(PROJECTS_HOME, origin, target)
     if (ProjectUtil.findAndFocusExistingProjectForPath(root) != null) return
     try {
-        withModalProgress(owner(project), "Downloading ${target.name}", TaskCancellation.cancellable()) {
+        withModalProgress(owner(project), "Downloading ${target.name}", Cancellation.cancellable()) {
             withContext(Dispatchers.IO) {
                 val folder = ProjectFolder(root)
                 if (!folder.isProjectFolder()) folder.writeIdentity(FolderIdentity(origin, target.id, target.name))

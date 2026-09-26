@@ -6,7 +6,8 @@ data generation, and MCP access for IDE agents.
 > **Requires a DATAMIMIC Enterprise Platform** and an account on it; the plugin does not work without one. Support for
 > the open-source DATAMIMIC CE is planned.
 >
-> Status: early development, IntelliJ Platform 2025.3+.
+> Status: early development. Requires a JetBrains IDE 2024.2+; the optional language-server integration requires
+> 2025.2.1+.
 
 ## Features
 
@@ -28,7 +29,7 @@ data generation, and MCP access for IDE agents.
   *Take over…* overrides it after confirmation.
 - Completion and checks for the folder's XML files from the platform's language server
   ([ADR 0004](docs/adr/0004-hosted-language-server.md)). The status bar shows *DATAMIMIC LSP: connected / ready / off /
-  error*; click it to turn the server on or off for the project, or to check again. Needs an IDE with the LSP API.
+  error*; click it to turn the server on or off for the project, or to check again. Requires JetBrains 2025.2.1+.
 - *Generate Data…* on the window's project: runs on the platform and shows the log and a preview per product.
 
 Local DATAMIMIC CE support is not part of this version; it follows once CE authoring is reworked.

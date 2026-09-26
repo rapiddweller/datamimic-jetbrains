@@ -11,7 +11,6 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
 import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
@@ -284,7 +283,7 @@ class PlatformLspSupport : LspServerSupportProvider {
 /** Starts the language server connection when a DATAMIMIC project folder opens. */
 class HostedLanguageServerStartup : ProjectActivity {
     override suspend fun execute(project: Project) {
-        if (project.isProjectFolder()) project.service<HostedLanguageServer>()
+        if (project.isProjectFolder()) project.getService(HostedLanguageServer::class.java)
     }
 }
 

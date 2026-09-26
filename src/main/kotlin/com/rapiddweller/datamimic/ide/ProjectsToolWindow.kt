@@ -12,7 +12,6 @@ import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
@@ -63,7 +62,7 @@ class ProjectsToolWindowFactory : ToolWindowFactory, DumbAware {
 
 internal class ProjectsPanel(private val project: Project) : SimpleToolWindowPanel(true, true) {
     private val platform = DatamimicPlatform.getInstance()
-    private val scope = project.service<ToolWindowScope>().scope
+    private val scope = project.getService(ToolWindowScope::class.java).scope
     private val active = project.activeProject()
     private val root = DefaultMutableTreeNode()
     private val model = DefaultTreeModel(root)

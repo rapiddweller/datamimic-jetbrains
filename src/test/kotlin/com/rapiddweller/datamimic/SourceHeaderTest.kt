@@ -10,8 +10,8 @@ import java.io.File
 
 class SourceHeaderTest {
     @Test
-    fun `every Kotlin source and build script starts with the MIT header`() {
-        val sources = File("src").walk().filter { it.extension == "kt" } + File(".").listFiles { file -> file.extension == "kts" }.orEmpty()
+    fun `every Kotlin and Java source and build script starts with the MIT header`() {
+        val sources = File("src").walk().filter { it.extension == "kt" || it.extension == "java" } + File(".").listFiles { file -> file.extension == "kts" }.orEmpty()
         val missing = sources.filterNot { it.readText().startsWith(HEADER) }.map { it.path }.toList()
         assertEquals(emptyList<String>(), missing)
     }
