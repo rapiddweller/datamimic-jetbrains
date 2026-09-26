@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.2.1]
+
+- Keep project opening alive when the Welcome screen closes, so the IDE no longer returns to Welcome.
+
 ## [0.2.0]
 
 - Open DATAMIMIC projects from the Welcome screen and File | Open, including sign-in and project selection without an already open project.

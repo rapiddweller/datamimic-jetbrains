@@ -48,6 +48,7 @@ internal class PlatformOperations(
     private val scope: CoroutineScope,
     private val active: ActiveProject?,
     private val selection: () -> PlatformNode?,
+    private val open: suspend (Project?, PlatformProject) -> Unit = ::openPlatformProject,
 ) {
     private val platform = DatamimicPlatform.getInstance()
 
@@ -64,7 +65,10 @@ internal class PlatformOperations(
         if (node is PlatformNode.ProjectNode) copyAiAssistantConfiguration(node.project)
     }
 
-    fun openProject(target: PlatformProject) = perform("Cannot Open Project") { openPlatformProject(project, target) }
+    fun openProject(target: PlatformProject) {
+        // WHY: opening a project disposes the Welcome screen and its panel scope.
+        platform.scope.launch(Dispatchers.EDT) { open(project, target) }
+    }
 
     fun signOut() = perform("Sign Out Failed") {
         // WHY: agents, locks and project tokens can only be given back while the session still exists.
