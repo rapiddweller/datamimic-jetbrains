@@ -52,6 +52,10 @@ class FakePlatform : AutoCloseable {
     /** When set, an upload waits here before it is processed. */
     var uploadGate: CountDownLatch? = null
 
+    /** The next N uploads fail after [uploadGate] with [uploadFailureStatus]. */
+    @Volatile var failingUploads = 0
+    @Volatile var uploadFailureStatus = 503
+
     /** When set, an acquire waits here before it is processed. */
     var acquireGate: CountDownLatch? = null
 
@@ -109,6 +113,11 @@ class FakePlatform : AutoCloseable {
                 else -> {
                     uploadsReceived++
                     uploadGate?.await(5, TimeUnit.SECONDS)
+                    if (failingUploads > 0) {
+                        failingUploads--
+                        return@authenticated exchange.error(uploadFailureStatus, "INTERNAL_SERVER_ERROR", "Upload temporarily unavailable")
+                    }
+                    val current = files[path]
                     val content = exchange.body().substringAfter("\r\n\r\n").substringBeforeLast("\r\n--")
                     if (exchange.requestHeaders.getFirst("If-None-Match") == "*") {
                         creates += path

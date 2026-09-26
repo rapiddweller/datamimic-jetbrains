@@ -13,6 +13,7 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets.UTF_8
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
 
@@ -31,6 +32,9 @@ class FakeWebSocketServer : AutoCloseable {
 
     /** When set, every handshake is refused with this HTTP status, as the platform does before accepting. */
     @Volatile var refuseWith: Int? = null
+
+    /** When set, the next handshake waits before it upgrades to WebSocket. */
+    @Volatile var handshakeGate: CountDownLatch? = null
 
     /** Accepts connections until closed; [afterHandshake] runs for each, then the client's frames are read. */
     fun serve(afterHandshake: (Connection) -> Unit = {}) = thread(isDaemon = true) {
@@ -78,6 +82,7 @@ class FakeWebSocketServer : AutoCloseable {
             val headers = lines.drop(1).associate { it.substringBefore(':').lowercase() to it.substringAfter(':').trim() } +
                 ("request-line" to lines.first())
             handshakes += headers
+            synchronized(this) { handshakeGate.also { handshakeGate = null } }?.await(5, java.util.concurrent.TimeUnit.SECONDS)
             refuseWith?.let { status ->
                 socket.getOutputStream().write("HTTP/1.1 $status Refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
                 return
