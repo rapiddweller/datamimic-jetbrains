@@ -162,6 +162,20 @@ class McpTest {
     }
 
     @Test
+    fun `junie keeps its config ignored before git is initialized`() {
+        val projectDir = temp.newFolder("no-git")
+        val ignore = File(projectDir, ".junie/.gitignore").apply {
+            parentFile.mkdirs()
+            writeText("/mcp/other.json\n")
+        }
+
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(McpServer("https://dm.example/mcp", emptyMap(), Instant.EPOCH))
+
+        assertEquals(listOf("/mcp/other.json", "/mcp/mcp.json"), ignore.readLines())
+        assertFalse(File(projectDir, ".git").exists())
+    }
+
+    @Test
     fun `no token is written into a junie config that git tracks`() {
         assumeFalse(isWindows())
         val projectDir = temp.newFolder("tracked").apply { File(this, ".git").mkdirs() }
