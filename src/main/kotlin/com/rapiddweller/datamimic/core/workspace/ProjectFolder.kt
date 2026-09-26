@@ -94,10 +94,27 @@ class ProjectFolder(root: Path) {
 
         /**
          * Where a project is kept under [base]: one folder per platform, one per project. The project id keeps two
-         * projects with the same name apart; a longer id is used when the short one is already taken.
+         * projects with the same name apart; a folder's persisted identity survives a platform rename, and a longer
+         * id is used when the short one is already taken.
          */
         fun locationFor(base: Path, origin: PlatformOrigin, project: PlatformProject): Path {
             val platformDir = base.resolve(safeName(origin.value.substringAfter("://")))
+            require(!Files.isSymbolicLink(platformDir)) { "DATAMIMIC platform folder must not be a symbolic link: $platformDir" }
+            if (Files.isDirectory(platformDir)) {
+                val matches = Files.list(platformDir).use { folders ->
+                    folders
+                        .filter { Files.isDirectory(it, LinkOption.NOFOLLOW_LINKS) }
+                        .filter { folder ->
+                            val identity = ProjectFolder(folder).identity()
+                            identity != null && identity.origin == origin && identity.projectId == project.id
+                        }
+                        .toList()
+                }
+                if (matches.isNotEmpty()) {
+                    check(matches.size == 1) { "More than one local folder represents ${project.id} on ${origin.value}." }
+                    return matches.single()
+                }
+            }
             val name = safeName(project.name)
             val candidates = listOf("$name-${safeName(project.id).take(8)}", "$name-${safeName(project.id)}").map(platformDir::resolve)
             return candidates.firstOrNull { ProjectFolder(it).isFreeFor(origin, project.id) } ?: candidates.last()
