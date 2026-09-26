@@ -19,8 +19,10 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeFalse
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -390,6 +392,69 @@ class ProjectSyncTest {
 
         ProjectFolder(first).writeIdentity(FolderIdentity(origin, "01234567-other", "Other"))
         assertEquals(home.resolve("platform.example.com_8443/Customer Data_ v2-0123456789abcdef"), ProjectFolder.locationFor(home, origin, project))
+    }
+
+    @Test
+    fun `a platform rename keeps the existing project folder`() {
+        val home = temp.newFolder("home").toPath()
+        val origin = PlatformOrigin("https://platform.example.com:8443")
+        val original = PlatformProject("0123456789abcdef", "Before Rename")
+        val folder = ProjectFolder.locationFor(home, origin, original)
+        ProjectFolder(folder).writeIdentity(FolderIdentity(origin, original.id, original.name))
+        Files.writeString(folder.resolve("draft.xml"), "not uploaded")
+
+        assertEquals(folder, ProjectFolder.locationFor(home, origin, original.copy(name = "After Rename")))
+        assertEquals("not uploaded", Files.readString(folder.resolve("draft.xml")))
+    }
+
+    @Test
+    fun `duplicate project identities stop without changing candidate folders`() {
+        val home = temp.newFolder("home").toPath()
+        val origin = PlatformOrigin("https://platform.example.com:8443")
+        val project = PlatformProject("0123456789abcdef", "Renamed")
+        val platformDir = home.resolve("platform.example.com_8443")
+        ProjectFolder(platformDir.resolve("a-old-name")).writeIdentity(FolderIdentity(origin, project.id, "Older"))
+        ProjectFolder(platformDir.resolve("z-old-name")).writeIdentity(FolderIdentity(origin, project.id, "Other"))
+        val short = platformDir.resolve("Renamed-01234567")
+        val full = platformDir.resolve("Renamed-0123456789abcdef")
+        ProjectFolder(short).writeIdentity(FolderIdentity(origin, "other", "Other"))
+        ProjectFolder(full).writeIdentity(FolderIdentity(origin, "another", "Another"))
+        Files.writeString(short.resolve("draft.xml"), "short edit")
+        Files.writeString(full.resolve("draft.xml"), "full edit")
+
+        assertThrows(IllegalStateException::class.java) { ProjectFolder.locationFor(home, origin, project) }
+        assertEquals("short edit", Files.readString(short.resolve("draft.xml")))
+        assertEquals("full edit", Files.readString(full.resolve("draft.xml")))
+    }
+
+    @Test
+    fun `a symlinked folder is not reused`() {
+        val home = temp.newFolder("home").toPath()
+        val origin = PlatformOrigin("https://platform.example.com:8443")
+        val project = PlatformProject("0123456789abcdef", "Renamed")
+        val target = temp.newFolder("outside").toPath()
+        ProjectFolder(target).writeIdentity(FolderIdentity(origin, project.id, "Older"))
+        val platformDir = home.resolve("platform.example.com_8443")
+        Files.createDirectories(platformDir)
+        val link = platformDir.resolve("old-name")
+        val linked = runCatching { Files.createSymbolicLink(link, target); true }.getOrDefault(false)
+        assumeTrue("file system supports symbolic links", linked)
+
+        assertEquals(platformDir.resolve("Renamed-01234567"), ProjectFolder.locationFor(home, origin, project))
+    }
+
+    @Test
+    fun `a symlinked platform folder is rejected`() {
+        val home = temp.newFolder("home").toPath()
+        val origin = PlatformOrigin("https://platform.example.com:8443")
+        val project = PlatformProject("0123456789abcdef", "Renamed")
+        val outside = temp.newFolder("outside").toPath()
+        ProjectFolder(outside.resolve("old-name")).writeIdentity(FolderIdentity(origin, project.id, "Older"))
+        val platformDir = home.resolve("platform.example.com_8443")
+        val linked = runCatching { Files.createSymbolicLink(platformDir, outside); true }.getOrDefault(false)
+        assumeTrue("file system supports symbolic links", linked)
+
+        assertThrows(IllegalArgumentException::class.java) { ProjectFolder.locationFor(home, origin, project) }
     }
 
     private fun syncNow() = runBlocking { session.sync.syncNow() }
