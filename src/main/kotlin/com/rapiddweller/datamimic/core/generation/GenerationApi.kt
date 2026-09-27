@@ -7,10 +7,10 @@
 package com.rapiddweller.datamimic.core.generation
 
 import com.rapiddweller.datamimic.core.HttpMethod
+import com.rapiddweller.datamimic.core.PlatformHeader
 import com.rapiddweller.datamimic.core.PlatformHttp
 import com.rapiddweller.datamimic.core.encode
 import com.rapiddweller.datamimic.core.json
-import kotlinx.coroutines.delay
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -105,25 +105,15 @@ sealed interface PreviewContent {
 }
 
 class GenerationApi(private val http: PlatformHttp) {
-    /**
-     * Dispatches a run and observes it until the platform reports a terminal status. The platform owns the run:
-     * cancelling the caller only stops observing, and a run still going after [MAX_OBSERVATION_MS] keeps running there.
-     */
-    suspend fun run(projectId: String, taskType: TaskType): RunOutcome {
+    /** Dispatches a generation run. Its [DispatchResult.taskId] is the platform's only lifecycle identity. */
+    fun dispatch(projectId: String, taskType: TaskType): DispatchResult {
         val body = buildJsonObject {
             put("timeout", DISPATCH_WAIT_SECONDS)
             put("task_type", json.encodeToJsonElement(TaskType.serializer(), taskType))
         }
         val response = json.decodeFromString<GenerateResponse>(http.postJson("${base(projectId)}/generate", body.toString()))
-        response.finishedStatus()?.let { return RunOutcome(response.taskId, it, response.message) }
-        var status = TaskStatus.RUNNING
-        var waited = 0L
-        while (!status.terminal && waited < MAX_OBSERVATION_MS) {
-            delay(POLL_INTERVAL_MS)
-            waited += POLL_INTERVAL_MS
-            status = status(projectId, response.taskId)
-        }
-        return RunOutcome(response.taskId, status, response.message)
+        response.finishedStatus()
+        return DispatchResult(response.taskId, response.message)
     }
 
     fun status(projectId: String, taskId: String): TaskStatus {
@@ -135,8 +125,15 @@ class GenerationApi(private val http: PlatformHttp) {
         return response.data.firstOrNull { it.taskId == taskId }?.status ?: TaskStatus.UNKNOWN
     }
 
-    fun logs(projectId: String, taskId: String): String =
-        http.send(HttpMethod.GET, "${base(projectId)}/tasks/${encode(taskId)}/logs?encode=false").body
+    fun logs(projectId: String, taskId: String): TaskLog {
+        val response = http.send(HttpMethod.GET, "${base(projectId)}/tasks/${encode(taskId)}/logs?encode=false")
+        return TaskLog(response.body, response.header(PlatformHeader.LOG_COMPLETED)?.equals("true", ignoreCase = true) == true)
+    }
+
+    /** Requests cancellation; the subsequent [status] observation remains the platform's authoritative outcome. */
+    fun stop(taskId: String) {
+        http.send(HttpMethod.POST, "/api/v2/tasks/${encode(taskId)}/cancel")
+    }
 
     fun previews(projectId: String, taskId: String): List<PreviewContent> =
         json.decodeFromString<PreviewResponse>(http.getJson("${base(projectId)}/task/${encode(taskId)}/preview")).preview.map(::toContent)
@@ -148,6 +145,10 @@ class GenerationApi(private val http: PlatformHttp) {
         const val DISPATCH_WAIT_SECONDS = 30
     }
 }
+
+data class DispatchResult(val taskId: String, val message: String?)
+
+data class TaskLog(val content: String, val completed: Boolean)
 
 internal const val MAX_PREVIEW_ROWS = 500
 
@@ -176,8 +177,3 @@ private fun cell(value: JsonElement?): String = when (value) {
     is JsonPrimitive -> value.content
     else -> value.toString()
 }
-
-data class RunOutcome(val taskId: String, val status: TaskStatus, val message: String?)
-
-private const val POLL_INTERVAL_MS = 3_000L
-private const val MAX_OBSERVATION_MS = 30 * 60 * 1_000L
