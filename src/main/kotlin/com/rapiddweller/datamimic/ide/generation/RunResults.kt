@@ -609,7 +609,7 @@ private class ArtifactBrowser(
     private fun save(name: String, downloadAction: (java.io.OutputStream, () -> Boolean) -> PlatformSessionFence) {
         if (!current() || project.isDisposed || transfer?.isActive == true) return
         val target = FileChooserFactory.getInstance()
-            .createSaveFileDialog(FileSaverDescriptor("Save artifact", "Save generated DATAMIMIC artifact"), project)
+            .createSaveFileDialog(FileSaverDescriptor("Save artifact", "Save generated DATAMIMIC artifact", *emptyArray()), project)
             .save(Path.of(project.basePath ?: System.getProperty("user.home")), name)
             ?.file
             ?.toPath()
