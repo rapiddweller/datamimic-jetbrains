@@ -30,6 +30,8 @@
         <!-- id must match TOOL_WINDOW_ID -->
         <toolWindow id="DATAMIMIC" anchor="left" icon="/icons/datamimic.svg"
                     factoryClass="com.rapiddweller.datamimic.ide.ProjectsToolWindowFactory"/>
+        <toolWindow id="DATAMIMIC Generation" anchor="bottom"
+                    factoryClass="com.rapiddweller.datamimic.ide.generation.GenerationTasksToolWindowFactory"/>
         <welcomeTabFactory implementation="com.rapiddweller.datamimic.ide.DatamimicWelcomeTabFactory"/>
         <writingAccessProvider implementation="com.rapiddweller.datamimic.ide.editing.PlatformWritingAccess"/>
         <editorNotificationProvider implementation="com.rapiddweller.datamimic.ide.editing.PlatformFileBanner"/>

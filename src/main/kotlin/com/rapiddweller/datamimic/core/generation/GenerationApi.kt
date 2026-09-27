@@ -23,6 +23,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
 @Serializable
@@ -32,6 +33,17 @@ enum class TaskType(val label: String) {
     @SerialName("timed_30min") TIMED_30_MIN("Timed: 30 minutes"),
     @SerialName("timed_1hour") TIMED_1_HOUR("Timed: 1 hour"),
     @SerialName("infinite") INFINITE("Continuous until stopped"),
+}
+
+private enum class GenerationTaskRoute(val routingKey: String) {
+    STANDARD("datamimic.standard"),
+    INFINITE("datamimic.infinite"),
+    TIMED_5_MIN("datamimic.timed_5min"),
+    TIMED_30_MIN("datamimic.timed_30min"),
+    TIMED_1_HOUR("datamimic.timed_1hour"),
+    TIMED_4_HOUR("datamimic.timed_4hour"),
+    TIMED_8_HOUR("datamimic.timed_8hour"),
+    TIMED_24_HOUR("datamimic.timed_24hour"),
 }
 
 @Serializable
@@ -66,8 +78,36 @@ enum class TaskStatus(val terminal: Boolean, val succeeded: Boolean = false) {
 @Serializable
 private data class TaskSearchResponse(val data: List<TaskRow>) {
     @Serializable
-    data class TaskRow(@SerialName("task_id") val taskId: String, val status: TaskStatus? = null)
+    data class TaskRow(@SerialName("task_id") val taskId: String, val status: JsonElement? = null)
 }
+
+internal sealed interface TaskObservation {
+    data class Known(val status: TaskStatus) : TaskObservation
+
+    data object Unavailable : TaskObservation
+
+    data object Unknown : TaskObservation
+}
+
+@Serializable
+private data class TaskHistoryResponse(val data: List<TaskHistoryRow>, val meta: TaskHistoryMeta)
+
+@Serializable
+private data class TaskHistoryRow(
+    @SerialName("task_id") val taskId: String,
+    val status: JsonElement? = null,
+    val name: String? = null,
+    @SerialName("date_queued") val dateQueued: String? = null,
+)
+
+@Serializable
+private data class TaskHistoryMeta(val pagination: TaskPagination)
+
+@Serializable
+private data class TaskPagination(
+    @SerialName("current_page") val currentPage: Int,
+    @SerialName("total_pages") val totalPages: Int,
+)
 
 @Serializable
 @JsonClassDiscriminator("extension")
@@ -120,12 +160,47 @@ class GenerationApi(private val http: PlatformHttp) {
     }
 
     fun status(projectId: String, taskId: String): TaskStatus {
+        return when (val observation = observe(projectId, taskId)) {
+            is TaskObservation.Known -> observation.status
+            TaskObservation.Unavailable, TaskObservation.Unknown -> TaskStatus.UNKNOWN
+        }
+    }
+
+    internal fun observe(projectId: String, taskId: String): TaskObservation {
         val body = buildJsonObject {
-            putJsonObject("filters") { put("task_id", taskId) }
+            putJsonObject("filters") {
+                put("task_id", taskId)
+                put("get_artifacts_metadata", false)
+            }
             putJsonObject("pagination") { put("page", 1); put("per_page", 1) }
         }
         val response = json.decodeFromString<TaskSearchResponse>(http.postJson("${base(projectId)}/tasks/search", body.toString()))
-        return response.data.firstOrNull { it.taskId == taskId }?.status ?: TaskStatus.UNKNOWN
+        val row = response.data.firstOrNull { it.taskId == taskId } ?: return TaskObservation.Unavailable
+        return row.status?.let(::decodeStatus) ?: TaskObservation.Unavailable
+    }
+
+    /** Lists this project's generation tasks; Platform authorization scopes the active project. */
+    fun history(projectId: String, page: Int): GenerationTaskPage {
+        val body = buildJsonObject {
+            putJsonObject("filters") {
+                put("get_artifacts_metadata", false)
+                putJsonArray("routing_keys") { GenerationTaskRoute.entries.forEach { add(JsonPrimitive(it.routingKey)) } }
+            }
+            putJsonObject("pagination") {
+                put("page", page)
+                put("per_page", HISTORY_PAGE_SIZE)
+            }
+            putJsonObject("sorting") {
+                put("sort_by", "id")
+                put("sort_order", "desc")
+            }
+        }
+        val response = json.decodeFromString<TaskHistoryResponse>(http.postJson("${base(projectId)}/tasks/search", body.toString()))
+        return GenerationTaskPage(
+            response.data.map { GenerationTask(it.taskId, it.status?.let(::decodeStatus).asStatus(), it.name, it.dateQueued) },
+            response.meta.pagination.currentPage,
+            response.meta.pagination.totalPages,
+        )
     }
 
     fun logs(projectId: String, taskId: String): TaskLog {
@@ -146,10 +221,28 @@ class GenerationApi(private val http: PlatformHttp) {
     private companion object {
         /** Seconds the platform waits for the run before answering "still running". */
         const val DISPATCH_WAIT_SECONDS = 30
+        const val HISTORY_PAGE_SIZE = 20
     }
 }
 
+private fun decodeStatus(value: JsonElement): TaskObservation = runCatching {
+    TaskObservation.Known(json.decodeFromJsonElement(TaskStatus.serializer(), value))
+}.getOrElse { TaskObservation.Unknown }
+
+private fun TaskObservation?.asStatus(): TaskStatus? = when (this) {
+    is TaskObservation.Known -> status
+    TaskObservation.Unknown -> TaskStatus.UNKNOWN
+    null, TaskObservation.Unavailable -> null
+}
+
 data class DispatchResult(val taskId: String, val message: String?)
+
+/** One task in the Platform-owned generation history. */
+data class GenerationTask(val taskId: String, val status: TaskStatus?, val name: String?, val queuedAt: String?) {
+    override fun toString(): String = listOfNotNull(status?.name, name, queuedAt, taskId.take(8)).joinToString(" · ")
+}
+
+data class GenerationTaskPage(val tasks: List<GenerationTask>, val page: Int, val totalPages: Int)
 
 data class TaskLog(val content: String, val completed: Boolean)
 

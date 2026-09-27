@@ -18,6 +18,7 @@ class GenerationRun(
     private val refreshLock = Mutex()
     private var closed = false
     private var status: TaskStatus? = null
+    private var unavailable = false
     private var log: String = ""
     private var logCompleted = false
     private var previews: List<PreviewContent> = emptyList()
@@ -30,13 +31,26 @@ class GenerationRun(
         var logError: Throwable? = null
         var previewError: Throwable? = null
 
-        runCatching { api.status(projectId, taskId) }
-            .onSuccess {
-                status = it
-                if (it.terminal && finishedAt == null) finishedAt = now()
+        runCatching { api.observe(projectId, taskId) }
+            .onSuccess { observation ->
+                when (observation) {
+                    is TaskObservation.Known -> {
+                        status = observation.status
+                        unavailable = false
+                        if (observation.status.terminal && finishedAt == null) finishedAt = now()
+                    }
+                    TaskObservation.Unknown -> {
+                        status = TaskStatus.UNKNOWN
+                        unavailable = false
+                    }
+                    TaskObservation.Unavailable -> {
+                        status = null
+                        unavailable = true
+                    }
+                }
             }
             .onFailure { statusError = it }
-        if (!logCompleted) {
+        if (!unavailable && !logCompleted) {
             runCatching { api.logs(projectId, taskId) }
                 .onSuccess {
                     log = it.content
@@ -44,7 +58,7 @@ class GenerationRun(
                 }
                 .onFailure { logError = it }
         }
-        if (status?.terminal == true && !previewsLoaded) {
+        if (!unavailable && status?.terminal == true && !previewsLoaded) {
             runCatching { api.previews(projectId, taskId) }
                 .onSuccess {
                     previews = it
@@ -55,10 +69,12 @@ class GenerationRun(
         GenerationSnapshot(
             taskId = taskId,
             status = status,
+            unavailable = unavailable,
             elapsedMillis = (finishedAt ?: now()) - startedAt,
             log = log,
             logCompleted = logCompleted,
             previews = previews,
+            previewsLoaded = previewsLoaded,
             statusError = statusError,
             logError = logError,
             previewError = previewError,
@@ -76,14 +92,16 @@ class GenerationRun(
 data class GenerationSnapshot(
     val taskId: String,
     val status: TaskStatus?,
+    val unavailable: Boolean,
     val elapsedMillis: Long,
     val log: String,
     val logCompleted: Boolean,
     val previews: List<PreviewContent>,
+    val previewsLoaded: Boolean,
     val statusError: Throwable?,
     val logError: Throwable?,
     val previewError: Throwable?,
 ) {
-    val active get() = status?.terminal != true
-    val needsRefresh get() = active || !logCompleted
+    val active get() = !unavailable && status?.terminal != true
+    val needsRefresh get() = !unavailable && (active || !logCompleted)
 }

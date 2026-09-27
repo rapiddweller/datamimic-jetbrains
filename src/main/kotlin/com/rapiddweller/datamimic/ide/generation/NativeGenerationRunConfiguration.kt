@@ -147,7 +147,11 @@ private class GenerationState(
             taskType = taskType,
             scope = scope,
             shouldStart = handler::accepting,
-            acceptRun = { run -> handler.started(run) && console.attach(run) },
+            acceptRun = { run ->
+                val attached = handler.started(run) && console.attach(run)
+                if (attached) RunResults.select(project, identity, run.taskId, scope)
+                attached
+            },
             rejected = handler::rejected,
         )
         return DefaultExecutionResult(console, handler)

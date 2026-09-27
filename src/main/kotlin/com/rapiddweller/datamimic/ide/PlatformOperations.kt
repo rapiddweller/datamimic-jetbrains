@@ -115,7 +115,7 @@ internal class PlatformOperations(
             taskType = taskType,
             scope = scope,
             acceptRun = { run ->
-                RunResults.show(project, identity.projectName, run, scope)
+                RunResults.show(project, identity, run, scope)
                 true
             },
         )
