@@ -34,9 +34,12 @@ class FakePlatform : AutoCloseable {
     var generationLog = ""
     var generationLogCompleted = false
     var generationPreview = "{\"preview\":[]}"
+    var generationSearchResponse: String? = null
+    var generationHistoryResponse = """{"data":[],"meta":{"pagination":{"current_page":1,"total_pages":0}}}"""
     var failingGenerationLogReads = 0
     var failingGenerationPreviewReads = 0
     val generationRequests = CopyOnWriteArrayList<String>()
+    val generationSearchRequests = CopyOnWriteArrayList<String>()
     val cancelledGenerationTasks = CopyOnWriteArrayList<String>()
     @Volatile var generationStatusReads = 0
     @Volatile var generationLogReads = 0
@@ -251,8 +254,15 @@ class FakePlatform : AutoCloseable {
             exchange.respond(202, """{"returncode":3,"task_id":"generation-1"}""")
         }
         authenticated("/api/v2/projects/p1/tasks/search") { exchange ->
-            generationStatusReads++
-            exchange.respond(200, """{"data":[{"task_id":"generation-1","status":"$generationStatus"}]}""")
+            val body = exchange.body()
+            generationSearchRequests += body
+            val response = if ("\"routing_keys\"" in body) {
+                generationHistoryResponse
+            } else {
+                generationStatusReads++
+                generationSearchResponse ?: """{"data":[{"task_id":"generation-1","status":"$generationStatus"}]}"""
+            }
+            exchange.respond(200, response)
         }
         authenticated("/api/v2/projects/p1/tasks/generation-1/logs") { exchange ->
             generationLogReads++

@@ -143,4 +143,34 @@ class GenerationRunTest {
         assertNull(retried.logError)
         assertNull(retried.previewError)
     }
+
+    @Test
+    fun `terminal task keeps refreshing an incomplete log`() = runBlocking {
+        sessions.login(platform.origin, "ada@example.com", "secret")
+        platform.generationStatus = "SUCCESS"
+        platform.generationLogCompleted = false
+        val run = GenerationRun(api, "p1", "generation-1")
+
+        assertTrue(run.refresh().needsRefresh)
+        assertTrue(run.refresh().needsRefresh)
+
+        assertEquals(2, platform.generationLogReads)
+    }
+
+    @Test
+    fun `newly dispatched task keeps polling until it becomes visible`() = runBlocking {
+        sessions.login(platform.origin, "ada@example.com", "secret")
+        platform.generationSearchResponse = """{"data":[]}"""
+        assertTrue(GenerationRun(api, "p1", "generation-1").refresh().unavailable)
+
+        val run = GenerationRun(api, "p1", "generation-1")
+        run.awaitVisibility()
+
+        assertTrue(run.refresh().needsRefresh)
+        assertEquals(0, platform.generationLogReads)
+
+        platform.generationSearchResponse = """{"data":[{"task_id":"generation-1","status":"QUEUED"}]}"""
+        assertEquals(TaskStatus.QUEUED, run.refresh().status)
+        assertEquals(3, platform.generationStatusReads)
+    }
 }

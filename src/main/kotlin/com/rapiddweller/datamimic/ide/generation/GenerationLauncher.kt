@@ -76,12 +76,19 @@ internal fun startGeneration(
             ) return@launch rejected()
             if (!shouldStart()) return@launch rejected()
             generationSession(project, identity)
-            val generation = DatamimicPlatform.getInstance().generation.boundTo(identity.origin)
+            val platform = DatamimicPlatform.getInstance()
+            val auth = platform.state.value as? AuthState.SignedIn ?: error("Sign in before starting generation.")
+            val generation = platform.generation.boundTo(identity.origin)
             val startedAt = System.currentTimeMillis()
             val dispatch = withBackgroundProgress(project, "Starting data generation for ${identity.projectName}") {
                 withContext(Dispatchers.IO) { generation.dispatch(identity.projectId, taskType) }
             }
             val run = GenerationRun(generation, identity.projectId, dispatch.taskId, startedAt)
+            run.awaitVisibility()
+            if (platform.state.value != auth) {
+                run.close()
+                return@launch rejected()
+            }
             if (!acceptRun(run)) run.close()
         } catch (e: CancellationException) {
             rejected()

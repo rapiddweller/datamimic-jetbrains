@@ -9,6 +9,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.roots.impl.DirectoryIndexExcludePolicy
 import com.intellij.openapi.vfs.WritingAccessProvider
 import com.intellij.openapi.wm.StatusBarWidgetFactory
+import com.intellij.openapi.wm.ToolWindowEP
 import com.intellij.openapi.wm.WelcomeScreen
 import com.intellij.openapi.wm.WelcomeTabFactory
 import com.intellij.platform.lsp.api.LspServerSupportProvider
@@ -19,6 +20,8 @@ import com.rapiddweller.datamimic.ide.editing.PlatformWritingAccess
 import com.rapiddweller.datamimic.ide.editing.ProjectFolderExcludePolicy
 import com.rapiddweller.datamimic.ide.lsp.LspStatusWidgetFactory
 import com.rapiddweller.datamimic.ide.lsp.PlatformLspSupport
+import com.rapiddweller.datamimic.ide.generation.GENERATION_TOOL_WINDOW_ID
+import com.rapiddweller.datamimic.ide.generation.GenerationTasksToolWindowFactory
 import javax.swing.JComponent
 import javax.swing.JPanel
 
@@ -32,6 +35,13 @@ class PluginRegistrationTest : BasePlatformTestCase() {
         assertInstanceOf(ActionManager.getInstance().getAction("Datamimic.OpenPlatformProject"), OpenPlatformProjectAction::class.java)
         assertTrue(WritingAccessProvider.EP.getExtensions(project).any { it is PlatformWritingAccess })
         assertTrue(EditorNotificationProvider.EP_NAME.getExtensions(project).any { it is PlatformFileBanner })
+        assertTrue(
+            ToolWindowEP.EP_NAME.extensionList.any {
+                it.id == GENERATION_TOOL_WINDOW_ID &&
+                    it.anchor == "bottom" &&
+                    it.factoryClass == GenerationTasksToolWindowFactory::class.java.name
+            },
+        )
     }
 
     fun `test the projects list builds in a project window and on the Welcome screen`() {
