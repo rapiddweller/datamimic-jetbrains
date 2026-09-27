@@ -46,6 +46,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
@@ -621,10 +622,11 @@ private class ArtifactBrowser(
         transfer = scope.launch {
             try {
                 val result = withTimeout(DOWNLOAD_TIMEOUT.toMillis()) {
+                    val timeoutJob = currentCoroutineContext().job
                     runInterruptible(Dispatchers.IO) {
                         downloadAtomically(
                             target,
-                            { !disposed && scope.isActive && !project.isDisposed && current() },
+                            { timeoutJob.isActive && !disposed && scope.isActive && !project.isDisposed && current() },
                             ::hasUnsavedEdits,
                             downloadAction,
                         )
