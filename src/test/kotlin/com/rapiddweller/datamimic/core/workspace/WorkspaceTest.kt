@@ -165,7 +165,7 @@ class WorkspaceTest {
         val first = session.beginShutdown(release = true)
         val second = session.beginShutdown(release = false)
         val secondCaller = CountDownLatch(1)
-        Thread { session.close(); secondCaller.countDown() }.start()
+        Thread { runBlocking { session.beginShutdown(release = true).await() }; secondCaller.countDown() }.start()
 
         assertTrue(first === second)
         assertFalse("shutdown must wait for the owned upload", first.isCompleted)
@@ -179,7 +179,7 @@ class WorkspaceTest {
         assertTrue(secondCaller.await(5, TimeUnit.SECONDS))
         assertEquals(1, platform.releases)
         assertEquals(null, platform.lockOwner)
-        assertTrue(session.dispose() === first)
+        assertTrue(session.beginShutdown(release = false) === first)
         assertEquals(1, platform.releases)
     }
 
@@ -218,7 +218,7 @@ class WorkspaceTest {
         assertFalse(Files.exists(folder.root.resolve(PATH)))
         assertEquals(null, session.bases.get(PATH))
         gate.countDown()
-        runBlocking { session.awaitShutdown(release = false) }
+        runBlocking { session.beginShutdown(release = false).await() }
         assertFalse(Files.exists(folder.root.resolve(PATH)))
         assertEquals(null, session.bases.get(PATH))
     }
@@ -229,7 +229,7 @@ class WorkspaceTest {
         val orphan = WorkspaceSession("p1", folder, workspace, LocksApi(transport), http, sessions, "binding-1", parent, NoEditor)
         parent.cancel()
 
-        runBlocking { orphan.awaitShutdown(release = false) }
+        runBlocking { orphan.beginShutdown(release = false).await() }
     }
 
     @Test

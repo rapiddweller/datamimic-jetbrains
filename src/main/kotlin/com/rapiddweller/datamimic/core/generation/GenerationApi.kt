@@ -169,13 +169,6 @@ class GenerationApi(private val http: PlatformHttp) {
         return DispatchResult(response.taskId, response.message)
     }
 
-    fun status(projectId: String, taskId: String): TaskStatus {
-        return when (val observation = observe(projectId, taskId)) {
-            is TaskObservation.Known -> observation.status
-            TaskObservation.Unavailable, TaskObservation.Unknown -> TaskStatus.UNKNOWN
-        }
-    }
-
     internal fun observe(projectId: String, taskId: String): TaskObservation {
         val body = buildJsonObject {
             putJsonObject("filters") {
@@ -218,7 +211,7 @@ class GenerationApi(private val http: PlatformHttp) {
         return TaskLog(response.body, response.header(PlatformHeader.LOG_COMPLETED)?.equals("true", ignoreCase = true) == true)
     }
 
-    /** Requests cancellation; the subsequent [status] observation remains the platform's authoritative outcome. */
+    /** Requests cancellation; the subsequent [observe] call remains the platform's authoritative outcome. */
     fun stop(taskId: String) {
         http.send(HttpMethod.POST, "/api/v2/tasks/${encode(taskId)}/cancel")
     }

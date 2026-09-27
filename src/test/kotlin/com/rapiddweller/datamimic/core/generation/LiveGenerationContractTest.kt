@@ -56,7 +56,7 @@ class LiveGenerationContractTest {
         platform.generationLog = "worker is running"
         platform.generationLogCompleted = true
 
-        assertEquals(TaskStatus.RUNNING, api.status("p1", "generation-1"))
+        assertEquals(TaskObservation.Known(TaskStatus.RUNNING), api.observe("p1", "generation-1"))
         val log = api.logs("p1", "generation-1")
 
         assertEquals("worker is running", log.content)
@@ -137,7 +137,6 @@ class LiveGenerationContractTest {
 
         platform.generationSearchResponse = """{"data":[{"task_id":"generation-1","status":"PAUSED"}]}"""
         assertEquals(TaskObservation.Unknown, api.observe("p1", "generation-1"))
-        assertEquals(TaskStatus.UNKNOWN, api.status("p1", "generation-1"))
 
         val statusRequest = json.parseToJsonElement(platform.generationSearchRequests.last()).jsonObject
         assertEquals(

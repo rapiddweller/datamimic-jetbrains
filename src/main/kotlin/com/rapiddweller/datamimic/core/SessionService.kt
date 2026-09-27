@@ -73,10 +73,8 @@ class SessionService(
         }
     }
 
-    fun login(origin: PlatformOrigin, email: String, password: String): StoredSession = login(origin, email, password, null)
-
     /** Runs [beforeReplace] after validating the new cookie while [current] is still the old session. */
-    fun login(origin: PlatformOrigin, email: String, password: String, beforeReplace: (() -> Unit)?): StoredSession {
+    fun login(origin: PlatformOrigin, email: String, password: String, beforeReplace: (() -> Unit)? = null): StoredSession {
         val response = try {
             http.sendPlatformRequest(
                 origin,
