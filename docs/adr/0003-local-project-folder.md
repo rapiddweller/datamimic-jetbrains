@@ -59,8 +59,8 @@ flowchart LR
   lock state is unknown, editing is allowed: the upload's ETag still fences every change.
 - **Never synced:** `.datamimic`, `.idea`, `.git`, `.junie`, `.claude`, `.vscode`, `.DS_Store`, `*.iml`, and the
   IDE's safe-write files (`*.tmp`, `*~`).
-- **Generate Data** syncs the folder first (agents write files the IDE may not have noticed) and warns about files
-  that are not on the platform, conflicts included.
+- **Generate Data** and the native Run Configuration share one flow: they sync the folder first (agents write files
+  the IDE may not have noticed) and warn about files that are not on the platform, conflicts included.
 - **Read-only platform files** (shared from global projects) are written read-only and restored if changed.
 - **Safety at the boundary.** Platform paths are checked segment by segment, must stay inside the folder and must
   not pass through a link. Names that differ only in case are skipped and reported.

@@ -25,8 +25,8 @@ flowchart LR
   U --> D["Deactivate: locks back, token revoked if no window uses the project"]
 ```
 
-- Files, locks, live updates, generation and agents of a window belong to its project. A window whose folder belongs
-  to another platform than the one signed in stays unconnected and says so.
+- Files, locks, live updates, generation (including its local Run Configurations) and agents of a window belong to its
+  project. A window whose folder belongs to another platform than the one signed in stays unconnected and says so.
 - IDE agents reach the platform MCP server with a project access token: the MCP endpoint does not accept the session
   cookie ([ADR 0001](0001-platform-session-auth.md)). One token per IDE product and project, shared by all windows,
   renewed four hours before it expires, revoked when the last window leaves the project.

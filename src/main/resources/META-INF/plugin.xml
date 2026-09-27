@@ -15,7 +15,8 @@
               edit locks; changes on both sides show a conflict banner.</li>
           <li>Completion and checks from the platform's language server, with a status bar switch to turn it on or
               off for the project.</li>
-          <li>Generate data on the platform and preview the results.</li>
+          <li>Generate data from the project window or a native Run Configuration, then follow platform status, logs,
+              errors, and product previews.</li>
           <li>Connect IDE agents to the project's MCP server.</li>
         </ul>
         ]]></description>

@@ -48,8 +48,8 @@ sequenceDiagram
   are different origins.
 - The plugin depends on the browser-session contract (cookie name, Origin rule). If the platform adds CSRF tokens,
   this breaks and must be revisited.
-- MCP needs bearer tokens and does not accept the session. Agents get the platform MCP through their own OAuth or a
-  project access token (not built yet).
+- MCP needs bearer tokens and does not accept the session. The plugin obtains a project access token and registers
+  it with supported IDE agents; it does not give agents the browser session.
 - OAuth can replace this without changing the rest of the client if the platform ever relays loopback callbacks.
 
 ## Verification

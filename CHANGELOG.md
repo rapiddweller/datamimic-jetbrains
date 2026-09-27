@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [0.3.0]
+
+- Show live platform generation status, logs, errors, and product previews; stopping requests platform cancellation.
+- Add a local native **DATAMIMIC Generation** Run Configuration for each opened DATAMIMIC project. It supports the
+  platform task types and uses the same save, sync, warning, and dispatch path as the project-window action.
+- Give every non-tag CI artifact a traceable SemVer version based on the latest release tag and GitHub run number.
+
 ## [0.2.1]
 
 - Keep project opening alive when the Welcome screen closes, so the IDE no longer returns to Welcome.
