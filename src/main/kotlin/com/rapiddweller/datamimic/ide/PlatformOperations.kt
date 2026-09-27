@@ -15,14 +15,12 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.platform.ide.progress.withBackgroundProgress
 import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 import com.rapiddweller.datamimic.core.PlatformProject
-import com.rapiddweller.datamimic.core.generation.GenerationRun
 import com.rapiddweller.datamimic.core.generation.TaskType
 import com.rapiddweller.datamimic.core.mcp.MCP_SERVER_NAME
-import com.rapiddweller.datamimic.ide.editing.flushPlatformEdits
 import com.rapiddweller.datamimic.ide.generation.RunResults
+import com.rapiddweller.datamimic.ide.generation.startGeneration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -103,34 +101,24 @@ internal class PlatformOperations(
             .createPopupChooserBuilder(TaskType.entries)
             .setTitle("Generate Data for ${target.name}")
             .setRenderer(textListCellRenderer { it?.label.orEmpty() })
-            .setItemChosenCallback { runGeneration(target, it) }
+            .setItemChosenCallback(::runGeneration)
             .createPopup()
             .showInFocusCenter()
     }
 
-    private fun runGeneration(target: PlatformProject, taskType: TaskType) {
+    private fun runGeneration(taskType: TaskType) {
         val project = project ?: return
-        val session = active?.session() ?: return
-        // WHY: the platform generates from its stored files, so local edits must reach it first.
-        val notOnPlatform = flushPlatformEdits(project, session)
-        if (notOnPlatform.isNotEmpty() && Messages.showOkCancelDialog(
-                project,
-                "These files have changes that are not on the platform, so the run would not use them:\n" + notOnPlatform.sorted().joinToString("\n"),
-                "Generate Data",
-                "Generate Anyway",
-                Messages.getCancelButton(),
-                Messages.getWarningIcon(),
-            ) != Messages.OK
-        ) {
-            return
-        }
-        perform("Generation Failed") {
-            val startedAt = System.currentTimeMillis()
-            val dispatch = withBackgroundProgress(project, "Starting data generation for ${target.name}") {
-                withContext(Dispatchers.IO) { platform.generation.dispatch(target.id, taskType) }
-            }
-            RunResults.show(project, target.name, GenerationRun(platform.generation, target.id, dispatch.taskId, startedAt), scope)
-        }
+        val identity = active?.identity ?: return
+        startGeneration(
+            project = project,
+            identity = identity,
+            taskType = taskType,
+            scope = scope,
+            acceptRun = { run ->
+                RunResults.show(project, identity.projectName, run, scope)
+                true
+            },
+        )
     }
 
     private fun perform(title: String, block: suspend CoroutineScope.() -> Unit) {

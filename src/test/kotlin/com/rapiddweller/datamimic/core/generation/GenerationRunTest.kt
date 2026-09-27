@@ -82,6 +82,50 @@ class GenerationRunTest {
     }
 
     @Test
+    fun `bound generation recovers after same origin session replacement`() = runBlocking {
+        platform.sessionId = "first"
+        sessions.login(platform.origin, "ada@example.com", "secret")
+        val run = GenerationRun(api.boundTo(platform.origin), "p1", "generation-1")
+
+        platform.sessionId = "replacement"
+        sessions.login(platform.origin, "ada@example.com", "secret")
+        val snapshot = run.refresh()
+
+        assertEquals(TaskStatus.RUNNING, snapshot.status)
+        assertEquals(1, platform.generationStatusReads)
+    }
+
+    @Test
+    fun `bound generation fails closed after session switches to another origin`() = runBlocking {
+        val other = FakePlatform()
+        try {
+            sessions.login(platform.origin, "ada@example.com", "secret")
+            val run = GenerationRun(api.boundTo(platform.origin), "p1", "generation-1")
+
+            sessions.login(other.origin, "ada@example.com", "secret")
+            val snapshot = run.refresh()
+
+            assertNotNull(snapshot.statusError)
+            assertEquals(0, platform.generationStatusReads)
+            assertEquals(0, other.generationStatusReads)
+        } finally {
+            other.close()
+        }
+    }
+
+    @Test
+    fun `bound generation fails closed after logout`() = runBlocking {
+        sessions.login(platform.origin, "ada@example.com", "secret")
+        val run = GenerationRun(api.boundTo(platform.origin), "p1", "generation-1")
+
+        sessions.logout()
+        val snapshot = run.refresh()
+
+        assertNotNull(snapshot.statusError)
+        assertEquals(0, platform.generationStatusReads)
+    }
+
+    @Test
     fun `log and preview failures remain visible for retry`() = runBlocking {
         sessions.login(platform.origin, "ada@example.com", "secret")
         platform.generationStatus = "SUCCESS"

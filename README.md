@@ -1,7 +1,7 @@
 # DATAMIMIC for JetBrains IDEs
 
 Work on DATAMIMIC Platform projects in your IDE: synced project folders, edit locks, the platform's language server,
-data generation, and MCP access for IDE agents.
+generation runs, and MCP access for IDE agents.
 
 > **Requires a DATAMIMIC Enterprise Platform** and an account on it; the plugin does not work without one. Support for
 > the open-source DATAMIMIC CE is planned.
@@ -30,7 +30,10 @@ data generation, and MCP access for IDE agents.
 - Completion and checks for the folder's XML files from the platform's language server
   ([ADR 0004](docs/adr/0004-hosted-language-server.md)). The status bar shows *DATAMIMIC LSP: connected / ready / off /
   error*; click it to turn the server on or off for the project, or to check again. Requires JetBrains 2025.2.1+.
-- *Generate Data…* on the window's project: runs on the platform and shows the log and a preview per product.
+- Generate from the project window or a native **DATAMIMIC Generation** Run Configuration. The configuration is local,
+  keeps only the platform/project identity and task type, and validates that the opened folder is connected before it
+  runs. Each run shows platform status, logs, errors, and previews; **Stop** requests platform cancellation, while
+  closing a view only stops local observation.
 
 Local DATAMIMIC CE support is not part of this version; it follows once CE authoring is reworked.
 
@@ -51,7 +54,9 @@ is removed.
 ```mermaid
 flowchart TB
   subgraph ide["ide: IntelliJ adapters"]
-    TW["Tool window: projects, open, generate"]
+    TW["Tool window: projects, open, generation results"]
+    RC["Run configuration: generation"]
+    GL["GenerationLauncher: save, sync, dispatch"]
     FL["File listener, write access, banners"]
     AP["ActiveProject: window and folder, agents"]
     LSP["HostedLanguageServer: LSP API"]
@@ -61,9 +66,14 @@ flowchart TB
     WS["WorkspaceSession: tree, event stream, locks, uploads"]
     SY["ProjectSync and ProjectFolder: three-way sync"]
     GEN[GenerationApi]
+    GR["GenerationRun: status, logs, previews"]
     BR["LspBridge: TCP to WebSocket"]
   end
+  TW --> GL
+  RC --> GL
   ide --> core
+  GL --> GEN
+  GEN --> GR
   HTTP --> P[("DATAMIMIC Platform")]
   WS --> P
   SY --> D[("Local project folders")]
@@ -77,13 +87,14 @@ flowchart TB
 | Task | Command |
 |---|---|
 | Unit and plugin tests | `./gradlew test` |
-| Run an IDE with the plugin | `./gradlew runIde` (debug via the run configuration in `.run/`) |
+| Run an IDE with the plugin | `./gradlew runIde` |
 | Package | `./gradlew buildPlugin` |
 
-CI (`.github/workflows/build.yml`) tests and builds every push and pull request; the plugin ZIP is attached to each run.
-Releasing: add the version's section `## [<version>]` to `CHANGELOG.md`, then push the tag `v<version>`. The tag is the
-plugin version (local builds are `0.0.0-dev`); the tag run also checks compatibility with the Plugin Verifier and
-publishes a GitHub release with the ZIP and that CHANGELOG section.
+CI (`.github/workflows/build.yml`) tests and builds pull requests, pushes to `main`, and version tags; the ZIP is
+attached to the run. Non-tag builds use `latest-tag-dev.<github-run-number>` (for example `0.2.1-dev.42`) and are
+development artifacts, not releases. Releasing: add `## [<version>]` to `CHANGELOG.md`, then push `v<version>`. A tag
+build uses the exact tag version, runs the Plugin Verifier, and publishes a GitHub release with the ZIP and that
+CHANGELOG section.
 
 Manual test against a local platform: start it with `DM_PLATFORM_PUBLIC_URL=http://localhost:3000`, then in the sandbox
 IDE open the DATAMIMIC tool window and sign in with `http://localhost:3000` (exactly the public URL).

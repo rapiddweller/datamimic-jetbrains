@@ -9,6 +9,7 @@ package com.rapiddweller.datamimic.core.generation
 import com.rapiddweller.datamimic.core.HttpMethod
 import com.rapiddweller.datamimic.core.PlatformHeader
 import com.rapiddweller.datamimic.core.PlatformHttp
+import com.rapiddweller.datamimic.core.PlatformOrigin
 import com.rapiddweller.datamimic.core.encode
 import com.rapiddweller.datamimic.core.json
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -105,6 +106,8 @@ sealed interface PreviewContent {
 }
 
 class GenerationApi(private val http: PlatformHttp) {
+    fun boundTo(origin: PlatformOrigin): GenerationApi = GenerationApi(http.boundTo(origin))
+
     /** Dispatches a generation run. Its [DispatchResult.taskId] is the platform's only lifecycle identity. */
     fun dispatch(projectId: String, taskType: TaskType): DispatchResult {
         val body = buildJsonObject {
