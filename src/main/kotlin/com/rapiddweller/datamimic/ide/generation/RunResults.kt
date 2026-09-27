@@ -235,6 +235,8 @@ private class GenerationTasksView(parentScope: CoroutineScope) : JPanel(BorderLa
     private fun select(target: GenerationBinding, taskId: String, suppliedRun: GenerationRun?) {
         if (binding != target || selectedTaskId == taskId && detail != null) return
         selectedTaskId = taskId
+        val row = (0 until tasks.size()).firstOrNull { tasks.getElementAt(it).taskId == taskId }
+        if (row == null) list.clearSelection() else list.selectedIndex = row
         val request = ++selectionRequest
         detail?.dispose()
         val run = suppliedRun ?: GenerationRun(

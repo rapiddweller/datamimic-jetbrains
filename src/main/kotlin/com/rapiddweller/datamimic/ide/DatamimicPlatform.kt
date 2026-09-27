@@ -57,13 +57,15 @@ import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 sealed interface AuthState {
     data object Unknown : AuthState
 
     data class SignedOut(val notice: String? = null) : AuthState
 
-    data class SignedIn(val user: PlatformUser, val origin: PlatformOrigin) : AuthState
+    /** Generation changes on reauthentication so in-flight UI work cannot cross sessions. */
+    data class SignedIn(val user: PlatformUser, val origin: PlatformOrigin, internal val generation: Long = 0) : AuthState
 }
 
 /** A file of a synced project folder and the platform session it belongs to. */
@@ -182,6 +184,7 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
 
     private val stateFlow = MutableStateFlow<AuthState>(AuthState.Unknown)
     val state: StateFlow<AuthState> = stateFlow
+    private val authVersion = AtomicLong()
 
     var lastPlatformUrl: String?
         get() = PropertiesComponent.getInstance().getValue(PLATFORM_URL_KEY)
@@ -190,11 +193,13 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     init {
         scope.launch(Dispatchers.IO) {
             val session = sessions.current()
-            stateFlow.value = if (session == null) {
-                AuthState.SignedOut()
-            } else {
-                runCatching { AuthState.SignedIn(account.me(), session.origin) }.getOrElse { AuthState.SignedOut(it.signedOutNotice()) }
-            }
+            publishAuth(
+                if (session == null) {
+                    AuthState.SignedOut()
+                } else {
+                    runCatching { AuthState.SignedIn(account.me(), session.origin) }.getOrElse { AuthState.SignedOut(it.signedOutNotice()) }
+                },
+            )
         }
     }
 
@@ -239,7 +244,7 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
         PasswordSafe.instance.set(loginCredentials(origin.value), if (input.rememberPassword) Credentials(input.email, input.password) else null)
         // WHY: after an expired session, open workspaces keep their unconfirmed edits and only need live updates again.
         openWorkspaces().forEach(WorkspaceSession::start)
-        stateFlow.value = AuthState.SignedIn(account.me(), origin)
+        publishAuth(AuthState.SignedIn(account.me(), origin))
     }
 
     /** Blocking; call off the UI thread. @return false when the platform could not revoke the session. */
@@ -250,8 +255,10 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
         }
         runBlocking { shutdowns.forEach { it.await() } }
         val revoked = sessions.logout()
-        stateFlow.value = AuthState.SignedOut(
-            if (revoked) null else "Signed out locally. The platform was unreachable, so the session expires there on its own.",
+        publishAuth(
+            AuthState.SignedOut(
+                if (revoked) null else "Signed out locally. The platform was unreachable, so the session expires there on its own.",
+            ),
         )
         return revoked
     }
@@ -262,7 +269,12 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
      */
     private fun onSessionExpired() {
         openWorkspaces().forEach { it.locks.dropAll() }
-        stateFlow.value = AuthState.SignedOut(SessionExpiredException().message)
+        publishAuth(AuthState.SignedOut(SessionExpiredException().message))
+    }
+
+    private fun publishAuth(value: AuthState) {
+        val revision = authVersion.incrementAndGet()
+        stateFlow.value = if (value is AuthState.SignedIn) value.copy(generation = revision) else value
     }
 
     override fun dispose() {
