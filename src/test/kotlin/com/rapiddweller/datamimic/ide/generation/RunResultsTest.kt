@@ -81,14 +81,15 @@ class RunResultsTest : BasePlatformTestCase() {
             val previewReady = AtomicBoolean()
             PlatformTestUtil.waitWithEventsDispatching("empty preview was not rendered unavailable", {
                 runInEdtAndWait {
-                    previewReady.set((tabbedPane(checkNotNull(console))?.indexOfTab("Preview") ?: -1) >= 0)
+                    previewReady.set((tabbedPane(checkNotNull(console))?.indexOfTab("Preview sample") ?: -1) >= 0)
                 }
                 previewReady.get()
             }, 5)
             runInEdtAndWait {
                 val preview = checkNotNull(tabbedPane(checkNotNull(console)))
-                val previewComponent = preview.getComponentAt(preview.indexOfTab("Preview"))
+                val previewComponent = preview.getComponentAt(preview.indexOfTab("Preview sample"))
                 assertTrue(textArea(previewComponent)?.text == "Preview unavailable.")
+                assertTrue(preview.indexOfTab("Artifacts") < 0)
             }
         } finally {
             console?.let { runInEdtAndWait(it::dispose) }
