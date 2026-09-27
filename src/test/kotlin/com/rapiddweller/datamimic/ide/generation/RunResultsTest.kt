@@ -4,6 +4,7 @@
 
 package com.rapiddweller.datamimic.ide.generation
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.testFramework.runInEdtAndWait
@@ -18,13 +19,46 @@ import com.rapiddweller.datamimic.core.generation.GenerationRun
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertTrue
 import java.awt.Component
 import java.awt.Container
 import java.net.http.HttpClient
+import java.nio.file.Files
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicBoolean
 
 class RunResultsTest : BasePlatformTestCase() {
+    fun `test artifact publication holds the unsaved check in the IDE write action`() {
+        val platform = FakePlatform()
+        val client = HttpClient.newHttpClient()
+        val target = Files.createTempFile("artifact-download", ".bin")
+        val protected = AtomicBoolean()
+        platform.artifactPayload = byteArrayOf(0, -1, 3, 4)
+        try {
+            val sessions = SessionService(client, { null }, {})
+            sessions.login(platform.origin, "ada@example.com", "secret")
+            val api = GenerationApi(PlatformHttp(client, sessions, "artifact-test"))
+            val future = CompletableFuture.runAsync {
+                downloadAtomically(target, { true }, {
+                    protected.set(ApplicationManager.getApplication().isWriteAccessAllowed())
+                    false
+                }) { output, keepGoing ->
+                    api.downloadArtifact("p1", "generation-1", "result.bin", output, keepGoing)
+                }
+            }
+
+            PlatformTestUtil.waitWithEventsDispatching("artifact publication did not finish", future::isDone, 5)
+            future.get()
+            assertTrue(protected.get())
+            assertArrayEquals(platform.artifactPayload, Files.readAllBytes(target))
+        } finally {
+            Files.deleteIfExists(target)
+            client.shutdownNow()
+            platform.close()
+        }
+    }
+
     fun `test log update retains manual scroll position and follows the end`() {
         lateinit var area: JBTextArea
         lateinit var scroll: JBScrollPane

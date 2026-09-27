@@ -7,7 +7,7 @@ package com.rapiddweller.datamimic.ide.generation
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.project.Project
 import com.intellij.execution.ui.ExecutionConsole
 import com.intellij.openapi.wm.ToolWindow
@@ -675,9 +675,7 @@ private class ArtifactBrowser(
     }
 
     private fun hasUnsavedEdits(target: Path): Boolean {
-        return ReadAction.compute<Boolean, RuntimeException> {
-            LocalFileSystem.getInstance().findFileByNioFile(target)?.let(FileDocumentManager.getInstance()::isFileModified) ?: false
-        }
+        return LocalFileSystem.getInstance().findFileByNioFile(target)?.let(FileDocumentManager.getInstance()::isFileModified) ?: false
     }
 
     override fun dispose() {
@@ -699,11 +697,16 @@ internal fun downloadAtomically(
     try {
         val fence = Files.newOutputStream(temp).use { output -> download(output, keepGoing) }
         if (!keepGoing()) throw CancellationException("Artifact download cancelled.")
-        fence.publish {
+        val publish: () -> Unit = {
             if (!keepGoing()) throw CancellationException("Artifact download cancelled.")
             if (hasUnsavedEdits(destination)) throw IOException("The destination has unsaved IDE edits.")
             if (!keepGoing()) throw CancellationException("Artifact download cancelled.")
             Files.move(temp, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        }
+        if (ApplicationManager.getApplication() == null) {
+            fence.publish(publish)
+        } else {
+            WriteAction.runAndWait<Exception> { fence.publish(publish) }
         }
     } finally {
         Files.deleteIfExists(temp)
