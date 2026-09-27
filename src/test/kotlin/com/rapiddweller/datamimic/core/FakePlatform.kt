@@ -30,6 +30,16 @@ class FakePlatform : AutoCloseable {
     val seenBindings = mutableListOf<String?>()
     val projectPages = mutableListOf<String>()
 
+    var generationStatus = "RUNNING"
+    var generationLog = ""
+    var generationLogCompleted = false
+    var generationPreview = "{\"preview\":[]}"
+    var failingGenerationLogReads = 0
+    var failingGenerationPreviewReads = 0
+    val generationRequests = CopyOnWriteArrayList<String>()
+    val cancelledGenerationTasks = CopyOnWriteArrayList<String>()
+    @Volatile var generationLogReads = 0
+
     /** path → (content, etag) of project "p1". */
     val files: MutableMap<String, Pair<String, String>> = ConcurrentHashMap(mapOf("model/datamimic.xml" to ("<setup/>" to "etag-1")))
     val uploads = CopyOnWriteArrayList<Triple<String, String?, String?>>()
@@ -233,6 +243,34 @@ class FakePlatform : AutoCloseable {
                 200,
                 """{"tenant_id":"t1","project_id":"p1","root_uri":"datamimic://project/p1","client_contract":{"text_document_sync":"full"}}""",
             )
+        }
+        authenticated("/api/v2/projects/p1/generate") { exchange ->
+            generationRequests += exchange.body()
+            exchange.respond(202, """{"returncode":3,"task_id":"generation-1"}""")
+        }
+        authenticated("/api/v2/projects/p1/tasks/search") { exchange ->
+            exchange.respond(200, """{"data":[{"task_id":"generation-1","status":"$generationStatus"}]}""")
+        }
+        authenticated("/api/v2/projects/p1/tasks/generation-1/logs") { exchange ->
+            generationLogReads++
+            if (failingGenerationLogReads > 0) {
+                failingGenerationLogReads--
+                return@authenticated exchange.error(500, "INTERNAL_SERVER_ERROR", "Log temporarily unavailable")
+            }
+            exchange.responseHeaders.add("X-Log-Completed", generationLogCompleted.toString())
+            exchange.respond(200, generationLog)
+        }
+        authenticated("/api/v2/projects/p1/task/generation-1/preview") { exchange ->
+            if (failingGenerationPreviewReads > 0) {
+                failingGenerationPreviewReads--
+                return@authenticated exchange.error(500, "INTERNAL_SERVER_ERROR", "Preview temporarily unavailable")
+            }
+            exchange.respond(200, generationPreview)
+        }
+        authenticated("/api/v2/tasks/generation-1/cancel") { exchange ->
+            cancelledGenerationTasks += "generation-1"
+            generationStatus = "CANCELLED"
+            exchange.respond(200, """{"message":"successfully canceled task.id=generation-1"}""")
         }
         authenticated("/api/v2/projects/p1") { exchange ->
             if (exchange.requestMethod != "PUT" || exchange.requestURI.path != "/api/v2/projects/p1") return@authenticated exchange.error(404, "NOT_FOUND", "missing")

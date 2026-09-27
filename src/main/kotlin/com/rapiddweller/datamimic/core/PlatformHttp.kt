@@ -71,6 +71,7 @@ enum class PlatformHeader(val wireName: String) {
     IF_NONE_MATCH("If-None-Match"),
     CLIENT_BINDING("X-DATAMIMIC-Client-Binding"),
     LOCK_GENERATION("X-DATAMIMIC-Lock-Generation"),
+    LOG_COMPLETED("X-Log-Completed"),
 }
 
 sealed interface RequestBody {

@@ -18,6 +18,7 @@ import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.platform.ide.progress.withBackgroundProgress
 import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 import com.rapiddweller.datamimic.core.PlatformProject
+import com.rapiddweller.datamimic.core.generation.GenerationRun
 import com.rapiddweller.datamimic.core.generation.TaskType
 import com.rapiddweller.datamimic.core.mcp.MCP_SERVER_NAME
 import com.rapiddweller.datamimic.ide.editing.flushPlatformEdits
@@ -124,15 +125,10 @@ internal class PlatformOperations(
             return
         }
         perform("Generation Failed") {
-            val outcome = withBackgroundProgress(project, "Generating data for ${target.name}") {
-                withContext(Dispatchers.IO) { platform.generation.run(target.id, taskType) }
+            val dispatch = withBackgroundProgress(project, "Starting data generation for ${target.name}") {
+                withContext(Dispatchers.IO) { platform.generation.dispatch(target.id, taskType) }
             }
-            val logs = withContext(Dispatchers.IO) { runCatching { platform.generation.logs(target.id, outcome.taskId) }.getOrDefault("") }
-            val previews = withContext(Dispatchers.IO) { runCatching { platform.generation.previews(target.id, outcome.taskId) }.getOrDefault(emptyList()) }
-            RunResults.show(project, target.name, outcome, logs, previews)
-            val type = if (outcome.status.succeeded) NotificationType.INFORMATION else NotificationType.WARNING
-            val text = if (outcome.status.terminal) "finished: ${outcome.status}" else "is still running on the platform"
-            notify("Data generation for ${target.name} $text.", type)
+            RunResults.show(project, target.name, GenerationRun(platform.generation, target.id, dispatch.taskId), scope)
         }
     }
 
