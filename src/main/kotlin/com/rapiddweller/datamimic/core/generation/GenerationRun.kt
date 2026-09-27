@@ -14,6 +14,7 @@ class GenerationRun(
     val taskId: String,
     private val startedAt: Long = System.currentTimeMillis(),
     private val now: () -> Long = System::currentTimeMillis,
+    private var awaitingVisibility: Boolean = false,
 ) {
     private val refreshLock = Mutex()
     private var closed = false
@@ -37,20 +38,22 @@ class GenerationRun(
                     is TaskObservation.Known -> {
                         status = observation.status
                         unavailable = false
+                        awaitingVisibility = false
                         if (observation.status.terminal && finishedAt == null) finishedAt = now()
                     }
                     TaskObservation.Unknown -> {
                         status = TaskStatus.UNKNOWN
                         unavailable = false
+                        awaitingVisibility = false
                     }
                     TaskObservation.Unavailable -> {
                         status = null
-                        unavailable = true
+                        unavailable = !awaitingVisibility
                     }
                 }
             }
             .onFailure { statusError = it }
-        if (!unavailable && !logCompleted) {
+        if (!unavailable && status != null && !logCompleted) {
             runCatching { api.logs(projectId, taskId) }
                 .onSuccess {
                     log = it.content
