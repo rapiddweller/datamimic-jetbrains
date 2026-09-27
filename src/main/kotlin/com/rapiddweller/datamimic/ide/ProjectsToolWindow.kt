@@ -64,7 +64,9 @@ internal class PlatformTreeNode(val node: PlatformNode) : DefaultMutableTreeNode
 
 /** Lifecycle owner for the tool window's coroutines of one IDE project. */
 @Service(Service.Level.PROJECT)
-class ToolWindowScope(val scope: CoroutineScope)
+class ToolWindowScope(val scope: CoroutineScope) : Disposable {
+    override fun dispose() = Unit
+}
 
 class ProjectsToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {

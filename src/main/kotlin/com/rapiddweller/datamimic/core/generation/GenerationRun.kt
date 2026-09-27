@@ -22,6 +22,7 @@ class GenerationRun(
     private var logCompleted = false
     private var previews: List<PreviewContent> = emptyList()
     private var previewsLoaded = false
+    private var finishedAt: Long? = null
 
     suspend fun refresh(): GenerationSnapshot = refreshLock.withLock {
         check(!closed) { "The generation view is closed." }
@@ -30,7 +31,10 @@ class GenerationRun(
         var previewError: Throwable? = null
 
         runCatching { api.status(projectId, taskId) }
-            .onSuccess { status = it }
+            .onSuccess {
+                status = it
+                if (it.terminal && finishedAt == null) finishedAt = now()
+            }
             .onFailure { statusError = it }
         if (!logCompleted) {
             runCatching { api.logs(projectId, taskId) }
@@ -51,7 +55,7 @@ class GenerationRun(
         GenerationSnapshot(
             taskId = taskId,
             status = status,
-            elapsedMillis = now() - startedAt,
+            elapsedMillis = (finishedAt ?: now()) - startedAt,
             log = log,
             logCompleted = logCompleted,
             previews = previews,

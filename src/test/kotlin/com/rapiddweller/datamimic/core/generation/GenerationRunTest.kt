@@ -51,6 +51,24 @@ class GenerationRunTest {
     }
 
     @Test
+    fun `elapsed includes dispatch wait and freezes at terminal status`() = runBlocking {
+        sessions.login(platform.origin, "ada@example.com", "secret")
+        var clock = 2_100L
+        val run = GenerationRun(api, "p1", "generation-1", startedAt = 100, now = { clock })
+
+        val running = run.refresh()
+        assertEquals(2_000, running.elapsedMillis)
+
+        platform.generationStatus = "SUCCESS"
+        clock = 3_100
+        val terminal = run.refresh()
+        assertEquals(3_000, terminal.elapsedMillis)
+
+        clock = 4_100
+        assertEquals(3_000, run.refresh().elapsedMillis)
+    }
+
+    @Test
     fun `close only stops observation while stop requests platform cancellation`() = runBlocking {
         sessions.login(platform.origin, "ada@example.com", "secret")
         val run = GenerationRun(api, "p1", "generation-1")

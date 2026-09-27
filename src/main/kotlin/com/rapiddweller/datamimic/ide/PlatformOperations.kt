@@ -125,10 +125,11 @@ internal class PlatformOperations(
             return
         }
         perform("Generation Failed") {
+            val startedAt = System.currentTimeMillis()
             val dispatch = withBackgroundProgress(project, "Starting data generation for ${target.name}") {
                 withContext(Dispatchers.IO) { platform.generation.dispatch(target.id, taskType) }
             }
-            RunResults.show(project, target.name, GenerationRun(platform.generation, target.id, dispatch.taskId), scope)
+            RunResults.show(project, target.name, GenerationRun(platform.generation, target.id, dispatch.taskId, startedAt), scope)
         }
     }
 
