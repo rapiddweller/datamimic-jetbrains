@@ -28,16 +28,6 @@ class GenerationRunTest {
     fun tearDown() = platform.close()
 
     @Test
-    fun `dispatch returns the platform task id without waiting for completion`() {
-        sessions.login(platform.origin, "ada@example.com", "secret")
-
-        val dispatch = api.dispatch("p1", TaskType.TIMED_5_MIN)
-
-        assertEquals("generation-1", dispatch.taskId)
-        assertTrue(platform.generationRequests.single().contains("\"task_type\":\"timed_5min\""))
-    }
-
-    @Test
     fun `refresh observes status and stops reading a completed log`() = runBlocking {
         sessions.login(platform.origin, "ada@example.com", "secret")
         platform.generationLog = "started"

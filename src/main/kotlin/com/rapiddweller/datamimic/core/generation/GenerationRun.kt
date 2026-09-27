@@ -35,7 +35,7 @@ class GenerationRun(
         if (!logCompleted) {
             runCatching { api.logs(projectId, taskId) }
                 .onSuccess {
-                    log = it.text
+                    log = it.content
                     logCompleted = it.completed
                 }
                 .onFailure { logError = it }
@@ -62,7 +62,7 @@ class GenerationRun(
     }
 
     /** Stops the Platform task. The next [refresh] observes its terminal state. */
-    fun stop() = api.cancel(taskId)
+    fun stop() = api.stop(taskId)
 
     fun close() {
         closed = true

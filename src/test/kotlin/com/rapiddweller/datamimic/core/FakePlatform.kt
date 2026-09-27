@@ -38,7 +38,9 @@ class FakePlatform : AutoCloseable {
     var failingGenerationPreviewReads = 0
     val generationRequests = CopyOnWriteArrayList<String>()
     val cancelledGenerationTasks = CopyOnWriteArrayList<String>()
+    @Volatile var generationStatusReads = 0
     @Volatile var generationLogReads = 0
+    @Volatile var generationPreviewReads = 0
 
     /** path → (content, etag) of project "p1". */
     val files: MutableMap<String, Pair<String, String>> = ConcurrentHashMap(mapOf("model/datamimic.xml" to ("<setup/>" to "etag-1")))
@@ -249,6 +251,7 @@ class FakePlatform : AutoCloseable {
             exchange.respond(202, """{"returncode":3,"task_id":"generation-1"}""")
         }
         authenticated("/api/v2/projects/p1/tasks/search") { exchange ->
+            generationStatusReads++
             exchange.respond(200, """{"data":[{"task_id":"generation-1","status":"$generationStatus"}]}""")
         }
         authenticated("/api/v2/projects/p1/tasks/generation-1/logs") { exchange ->
@@ -261,6 +264,7 @@ class FakePlatform : AutoCloseable {
             exchange.respond(200, generationLog)
         }
         authenticated("/api/v2/projects/p1/task/generation-1/preview") { exchange ->
+            generationPreviewReads++
             if (failingGenerationPreviewReads > 0) {
                 failingGenerationPreviewReads--
                 return@authenticated exchange.error(500, "INTERNAL_SERVER_ERROR", "Preview temporarily unavailable")

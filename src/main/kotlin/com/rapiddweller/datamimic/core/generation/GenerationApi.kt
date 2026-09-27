@@ -131,7 +131,7 @@ class GenerationApi(private val http: PlatformHttp) {
     }
 
     /** Requests cancellation; the subsequent [status] observation remains the platform's authoritative outcome. */
-    fun cancel(taskId: String) {
+    fun stop(taskId: String) {
         http.send(HttpMethod.POST, "/api/v2/tasks/${encode(taskId)}/cancel")
     }
 
@@ -148,7 +148,7 @@ class GenerationApi(private val http: PlatformHttp) {
 
 data class DispatchResult(val taskId: String, val message: String?)
 
-data class TaskLog(val text: String, val completed: Boolean)
+data class TaskLog(val content: String, val completed: Boolean)
 
 internal const val MAX_PREVIEW_ROWS = 500
 
