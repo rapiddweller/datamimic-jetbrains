@@ -26,6 +26,11 @@ class GenerationRun(
     private var previews: List<PreviewContent> = emptyList()
     private var previewsLoaded = false
     private var finishedAt: Long? = null
+    private var awaitingVisibility = false
+
+    internal fun awaitVisibility() {
+        awaitingVisibility = true
+    }
 
     suspend fun refresh(): GenerationSnapshot = refreshLock.withLock {
         check(!closed) { "The generation view is closed." }
@@ -39,20 +44,22 @@ class GenerationRun(
                     is TaskObservation.Known -> {
                         status = observation.status
                         unavailable = false
+                        awaitingVisibility = false
                         if (observation.status.terminal && finishedAt == null) finishedAt = now()
                     }
                     TaskObservation.Unknown -> {
                         status = TaskStatus.UNKNOWN
                         unavailable = false
+                        awaitingVisibility = false
                     }
                     TaskObservation.Unavailable -> {
                         status = null
-                        unavailable = true
+                        unavailable = !awaitingVisibility
                     }
                 }
             }
             .onFailure { statusError = it }
-        if (!unavailable && !logCompleted) {
+        if (!unavailable && status != null && !logCompleted) {
             runCatching { api.logs(projectId, taskId) }
                 .onSuccess {
                     log = it.content
