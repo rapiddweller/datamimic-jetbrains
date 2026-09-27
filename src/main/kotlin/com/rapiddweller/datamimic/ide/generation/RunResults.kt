@@ -31,13 +31,35 @@ import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.Point
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.SwingUtilities
 import javax.swing.table.DefaultTableModel
 
 internal const val GENERATION_TOOL_WINDOW_ID = "DATAMIMIC Generation"
+
+internal fun updateOutput(scroll: JBScrollPane, area: JBTextArea, value: String) {
+    if (area.text == value) return
+    val bar = scroll.verticalScrollBar
+    val atEnd = bar.value + bar.visibleAmount >= bar.maximum
+    val position = Point(scroll.viewport.viewPosition)
+    val start = area.selectionStart.coerceAtMost(value.length)
+    val end = area.selectionEnd.coerceAtMost(value.length)
+    area.text = value
+    area.select(start, end)
+    scroll.viewport.viewSize = area.preferredSize
+    SwingUtilities.invokeLater {
+        if (atEnd) {
+            scroll.verticalScrollBar.value = scroll.verticalScrollBar.maximum
+        } else {
+            val maximum = (scroll.verticalScrollBar.maximum - scroll.verticalScrollBar.visibleAmount).coerceAtLeast(0)
+            scroll.viewport.viewPosition = Point(position.x, position.y.coerceAtMost(maximum))
+        }
+    }
+}
 
 /** Opens a closeable, bottom result view. Closing it only stops local observation. */
 internal object RunResults {
@@ -85,6 +107,8 @@ private class RunResultView(
     private val tabs = JBTabbedPane()
     private val log = output()
     private val errorOutput = output()
+    private val logScroll = JBScrollPane(log)
+    private val errorScroll = JBScrollPane(errorOutput)
     private val previewTabs = mutableSetOf<String>()
     private var observation: Job? = null
     private var actionError: Throwable? = null
@@ -100,8 +124,8 @@ private class RunResultView(
             add(close)
         }
         add(header, BorderLayout.NORTH)
-        tabs.addTab("Log", JBScrollPane(log))
-        tabs.addTab("Errors", JBScrollPane(errorOutput))
+        tabs.addTab("Log", logScroll)
+        tabs.addTab("Errors", errorScroll)
         add(tabs, BorderLayout.CENTER)
         stop.addActionListener { stopServerRun() }
         retry.addActionListener {
@@ -147,8 +171,8 @@ private class RunResultView(
         state.text = "Status: ${snapshot.status ?: "unavailable"} · Elapsed: ${snapshot.elapsedMillis / 1_000}s"
         stop.isEnabled = snapshot.active && !stopping
         retry.isEnabled = !stopping
-        update(log, snapshot.log.ifBlank { "No log output." })
-        update(errorOutput, errors(snapshot).ifBlank { "No errors." })
+        updateOutput(logScroll, log, snapshot.log.ifBlank { "No log output." })
+        updateOutput(errorScroll, errorOutput, errors(snapshot).ifBlank { "No errors." })
         snapshot.previews.filter { previewTabs.add(it.name) }.forEach { tabs.addTab(it.name, component(it)) }
     }
 
@@ -182,14 +206,6 @@ private class RunResultView(
     }
 
     private fun text(value: String): JComponent = JBScrollPane(output().apply { text = value })
-
-    private fun update(area: JBTextArea, value: String) {
-        if (area.text == value) return
-        val start = area.selectionStart.coerceAtMost(value.length)
-        val end = area.selectionEnd.coerceAtMost(value.length)
-        area.text = value
-        area.select(start, end)
-    }
 
     private companion object {
         const val REFRESH_INTERVAL_MS = 3_000L
