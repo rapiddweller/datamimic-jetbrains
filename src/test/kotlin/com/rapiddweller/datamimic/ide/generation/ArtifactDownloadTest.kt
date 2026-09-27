@@ -179,6 +179,25 @@ class ArtifactDownloadTest {
     }
 
     @Test
+    fun `cancellation after the unsaved check keeps existing target and removes temp`() {
+        val target = target("result.bin", byteArrayOf(7, 7))
+        platform.artifactPayload = byteArrayOf(1, 2)
+        var keepGoing = true
+
+        assertThrows(CancellationException::class.java) {
+            downloadAtomically(target, { keepGoing }, {
+                keepGoing = false
+                false
+            }) { output, current ->
+                api.downloadArtifact("p1", "generation-1", "result.bin", output, current)
+            }
+        }
+
+        assertArrayEquals(byteArrayOf(7, 7), Files.readAllBytes(target))
+        assertNoDownloadTemps(target)
+    }
+
+    @Test
     fun `first chunk reaches the temporary output before the response completes`() {
         val target = target("result.bin", byteArrayOf(7, 7))
         val first = byteArrayOf(0, -1, 3)
