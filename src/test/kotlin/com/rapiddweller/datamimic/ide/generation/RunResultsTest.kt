@@ -8,8 +8,20 @@ import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.testFramework.runInEdtAndWait
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextArea
+import com.rapiddweller.datamimic.core.FakePlatform
+import com.rapiddweller.datamimic.core.PlatformHttp
+import com.rapiddweller.datamimic.core.SessionService
+import com.rapiddweller.datamimic.core.generation.GenerationApi
+import com.rapiddweller.datamimic.core.generation.GenerationRun
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import org.junit.Assert.assertTrue
+import java.awt.Component
+import java.awt.Container
+import java.net.http.HttpClient
 import java.util.concurrent.atomic.AtomicBoolean
 
 class RunResultsTest : BasePlatformTestCase() {
@@ -48,5 +60,55 @@ class RunResultsTest : BasePlatformTestCase() {
         assertTrue(followed.get())
     }
 
+    fun `test empty terminal preview is rendered unavailable`() {
+        val platform = FakePlatform()
+        val client = HttpClient.newHttpClient()
+        val scope = CoroutineScope(SupervisorJob())
+        val stored = arrayOfNulls<String>(1)
+        var console: NativeGenerationConsole? = null
+        try {
+            platform.generationStatus = "SUCCESS"
+            val sessions = SessionService(client, { stored[0] }, { stored[0] = it })
+            sessions.login(platform.origin, "ada@example.com", "secret")
+            val run = GenerationRun(GenerationApi(PlatformHttp(client, sessions, "binding")), "p1", "generation-1")
+            val handler = ServerGenerationProcessHandler({}, {})
+            runInEdtAndWait {
+                handler.startNotify()
+                console = NativeGenerationConsole(project, "Payments", scope, handler)
+                assertTrue(checkNotNull(console).attach(run))
+            }
+
+            val previewReady = AtomicBoolean()
+            PlatformTestUtil.waitWithEventsDispatching("empty preview was not rendered unavailable", {
+                runInEdtAndWait {
+                    previewReady.set((tabbedPane(checkNotNull(console))?.indexOfTab("Preview") ?: -1) >= 0)
+                }
+                previewReady.get()
+            }, 5)
+            runInEdtAndWait {
+                val preview = checkNotNull(tabbedPane(checkNotNull(console)))
+                val previewComponent = preview.getComponentAt(preview.indexOfTab("Preview"))
+                assertTrue(textArea(previewComponent)?.text == "Preview unavailable.")
+            }
+        } finally {
+            console?.let { runInEdtAndWait(it::dispose) }
+            scope.cancel()
+            client.shutdownNow()
+            platform.close()
+        }
+    }
+
     private fun lines(count: Int) = (1..count).joinToString("\n") { "line $it" }
+
+    private fun tabbedPane(component: Component): JBTabbedPane? = when (component) {
+        is JBTabbedPane -> component
+        is Container -> component.components.firstNotNullOfOrNull(::tabbedPane)
+        else -> null
+    }
+
+    private fun textArea(component: Component): JBTextArea? = when (component) {
+        is JBTextArea -> component
+        is Container -> component.components.firstNotNullOfOrNull(::textArea)
+        else -> null
+    }
 }

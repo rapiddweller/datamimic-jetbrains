@@ -143,4 +143,17 @@ class GenerationRunTest {
         assertNull(retried.logError)
         assertNull(retried.previewError)
     }
+
+    @Test
+    fun `terminal task keeps refreshing an incomplete log`() = runBlocking {
+        sessions.login(platform.origin, "ada@example.com", "secret")
+        platform.generationStatus = "SUCCESS"
+        platform.generationLogCompleted = false
+        val run = GenerationRun(api, "p1", "generation-1")
+
+        assertTrue(run.refresh().needsRefresh)
+        assertTrue(run.refresh().needsRefresh)
+
+        assertEquals(2, platform.generationLogReads)
+    }
 }
