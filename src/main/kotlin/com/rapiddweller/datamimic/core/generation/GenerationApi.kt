@@ -9,6 +9,7 @@ package com.rapiddweller.datamimic.core.generation
 import com.rapiddweller.datamimic.core.HttpMethod
 import com.rapiddweller.datamimic.core.PlatformHeader
 import com.rapiddweller.datamimic.core.PlatformHttp
+import com.rapiddweller.datamimic.core.PlatformSessionFence
 import com.rapiddweller.datamimic.core.PlatformOrigin
 import com.rapiddweller.datamimic.core.encode
 import com.rapiddweller.datamimic.core.json
@@ -230,17 +231,21 @@ class GenerationApi(private val http: PlatformHttp) {
             .artifacts
             .map { toArtifact(it, projectId, taskId) }
 
-    fun downloadArtifact(projectId: String, taskId: String, entityName: String, output: OutputStream, keepGoing: () -> Boolean) {
+    internal fun downloadArtifact(
+        projectId: String,
+        taskId: String,
+        entityName: String,
+        output: OutputStream,
+        keepGoing: () -> Boolean,
+    ): PlatformSessionFence =
         download("${base(projectId)}/tasks/${encode(taskId)}/artifacts/${encodeEntityName(entityName)}/download", output, keepGoing)
-    }
 
-    fun downloadArtifacts(projectId: String, taskId: String, output: OutputStream, keepGoing: () -> Boolean) {
+    internal fun downloadArtifacts(projectId: String, taskId: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
         download("${base(projectId)}/tasks/${encode(taskId)}/artifacts/download", output, keepGoing)
-    }
 
     private fun base(projectId: String) = "/api/v2/projects/${encode(projectId)}"
 
-    private fun download(path: String, output: OutputStream, keepGoing: () -> Boolean) {
+    private fun download(path: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
         http.getTo(path, output) { input, destination ->
             val buffer = ByteArray(DEFAULT_STREAM_BUFFER_SIZE)
             while (true) {
@@ -250,7 +255,6 @@ class GenerationApi(private val http: PlatformHttp) {
                 destination.write(buffer, 0, count)
             }
         }
-    }
 
     private companion object {
         /** Seconds the platform waits for the run before answering "still running". */

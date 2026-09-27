@@ -65,6 +65,14 @@ class SessionService(
         if (ended) onExpired()
     }
 
+    /** Runs [action] only while [expected] is still the active credential. */
+    internal fun publishIfCurrent(expected: StoredSession, action: () -> Unit): Boolean = synchronized(this) {
+        if (current() != expected) false else {
+            action()
+            true
+        }
+    }
+
     fun login(origin: PlatformOrigin, email: String, password: String): StoredSession = login(origin, email, password, null)
 
     /** Runs [beforeReplace] after validating the new cookie while [current] is still the old session. */

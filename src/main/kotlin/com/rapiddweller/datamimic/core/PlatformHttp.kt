@@ -6,6 +6,8 @@ package com.rapiddweller.datamimic.core
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -16,9 +18,8 @@ import java.net.http.WebSocketHandshakeException
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Duration
 import java.util.UUID
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
-import java.io.InputStream
-import java.io.OutputStream
 
 internal val json = Json {
     ignoreUnknownKeys = true
@@ -114,6 +115,14 @@ class PlatformResponse(val status: Int, val body: String, private val headers: j
     fun headers(name: PlatformHeader): List<String> = headers.allValues(name.wireName)
 }
 
+internal class PlatformSessionFence(private val sessions: SessionService, private val session: StoredSession) {
+    fun publish(action: () -> Unit) {
+        if (!sessions.publishIfCurrent(session, action)) throw CancellationException("The DATAMIMIC session changed during download.")
+    }
+}
+
+internal val DOWNLOAD_TIMEOUT: Duration = Duration.ofMinutes(10)
+
 /** Authenticated transport of one IDE process: session cookie, platform Origin and client binding on every request. */
 class PlatformHttp(
     private val http: HttpClient,
@@ -155,7 +164,7 @@ class PlatformHttp(
     fun postJson(path: String, body: String): String = send(HttpMethod.POST, path, RequestBody.Json(body)).body
 
     /** Copies a successful GET response without retaining its payload in memory. */
-    fun getTo(path: String, output: OutputStream, copy: (InputStream, OutputStream) -> Unit) {
+    internal fun getTo(path: String, output: OutputStream, copy: (InputStream, OutputStream) -> Unit): PlatformSessionFence {
         val session = sessions.current() ?: throw SessionExpiredException()
         check(boundOrigin == null || session.origin == boundOrigin) { "The DATAMIMIC session is connected to another platform." }
         val request = HttpRequest.newBuilder(URI(session.origin.value + path))
@@ -176,11 +185,7 @@ class PlatformHttp(
             }
             copy(input, output)
         }
-    }
-
-    private companion object {
-        // Artifact ZIP creation and streaming can legitimately outlive ordinary JSON GETs.
-        val DOWNLOAD_TIMEOUT: Duration = Duration.ofMinutes(10)
+        return PlatformSessionFence(sessions, session)
     }
 }
 

@@ -26,6 +26,8 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBFont
+import com.rapiddweller.datamimic.core.DOWNLOAD_TIMEOUT
+import com.rapiddweller.datamimic.core.PlatformSessionFence
 import com.rapiddweller.datamimic.core.generation.GenerationRun
 import com.rapiddweller.datamimic.core.generation.GenerationSnapshot
 import com.rapiddweller.datamimic.core.generation.GenerationTask
@@ -40,7 +42,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -48,6 +52,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.Font
@@ -601,7 +606,7 @@ private class ArtifactBrowser(
         }
     }
 
-    private fun save(name: String, downloadAction: (java.io.OutputStream, () -> Boolean) -> Unit) {
+    private fun save(name: String, downloadAction: (java.io.OutputStream, () -> Boolean) -> PlatformSessionFence) {
         if (!current() || project.isDisposed || transfer?.isActive == true) return
         val target = FileChooserFactory.getInstance()
             .createSaveFileDialog(FileSaverDescriptor("Save artifact", "Save generated DATAMIMIC artifact"), project)
@@ -615,19 +620,21 @@ private class ArtifactBrowser(
         updateActions()
         transfer = scope.launch {
             try {
-                val result = runInterruptible(Dispatchers.IO) {
-                    downloadAtomically(
-                        target,
-                        { !disposed && scope.isActive && !project.isDisposed && current() },
-                        ::hasUnsavedEdits,
-                        downloadAction,
-                    )
-                    if (FileTypeManager.getInstance().getFileTypeByFileName(target.fileName.toString()).isBinary) {
-                        null
-                    } else {
-                        LocalFileSystem.getInstance().run {
-                            refreshNioFiles(listOf(target), true, false, null)
-                            findFileByNioFile(target)
+                val result = withTimeout(DOWNLOAD_TIMEOUT.toMillis()) {
+                    runInterruptible(Dispatchers.IO) {
+                        downloadAtomically(
+                            target,
+                            { !disposed && scope.isActive && !project.isDisposed && current() },
+                            ::hasUnsavedEdits,
+                            downloadAction,
+                        )
+                        if (FileTypeManager.getInstance().getFileTypeByFileName(target.fileName.toString()).isBinary) {
+                            null
+                        } else {
+                            LocalFileSystem.getInstance().run {
+                                refreshNioFiles(listOf(target), false, false, null)
+                                findFileByNioFile(target)
+                            }
                         }
                     }
                 }
@@ -636,12 +643,13 @@ private class ArtifactBrowser(
                     state.text = "Saved ${target.fileName}."
                     if (result != null) FileEditorManager.getInstance(project).openFile(result, true)
                 }
-            } catch (error: CancellationException) {
-                withContext(Dispatchers.EDT) {
+            } catch (_: TimeoutCancellationException) {
+                withContext(NonCancellable + Dispatchers.EDT) {
                     if (current()) {
-                        state.text = "Download cancelled."
+                        state.text = "Download timed out."
                     }
                 }
+            } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 withContext(Dispatchers.EDT) {
@@ -650,7 +658,7 @@ private class ArtifactBrowser(
                     }
                 }
             } finally {
-                withContext(Dispatchers.EDT) {
+                withContext(NonCancellable + Dispatchers.EDT) {
                     downloading = false
                     if (current()) updateActions()
                 }
@@ -682,15 +690,19 @@ internal fun downloadAtomically(
     target: Path,
     keepGoing: () -> Boolean,
     hasUnsavedEdits: (Path) -> Boolean,
-    download: (java.io.OutputStream, () -> Boolean) -> Unit,
+    download: (java.io.OutputStream, () -> Boolean) -> PlatformSessionFence,
 ) {
-    val temp = Files.createTempFile(checkNotNull(target.toAbsolutePath().parent), ".datamimic-", ".tmp")
+    val destination = target.toAbsolutePath()
+    val temp = Files.createTempFile(checkNotNull(destination.parent), ".datamimic-", ".tmp")
     try {
-        Files.newOutputStream(temp).use { output -> download(output, keepGoing) }
+        val fence = Files.newOutputStream(temp).use { output -> download(output, keepGoing) }
         if (!keepGoing()) throw CancellationException("Artifact download cancelled.")
-        if (hasUnsavedEdits(target)) throw IOException("The destination has unsaved IDE edits.")
-        if (!keepGoing()) throw CancellationException("Artifact download cancelled.")
-        Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        fence.publish {
+            if (!keepGoing()) throw CancellationException("Artifact download cancelled.")
+            if (hasUnsavedEdits(destination)) throw IOException("The destination has unsaved IDE edits.")
+            if (!keepGoing()) throw CancellationException("Artifact download cancelled.")
+            Files.move(temp, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        }
     } finally {
         Files.deleteIfExists(temp)
     }

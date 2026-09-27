@@ -4,6 +4,7 @@
 
 package com.rapiddweller.datamimic.core.generation
 
+import com.rapiddweller.datamimic.core.PlatformSessionFence
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.OutputStream
@@ -87,10 +88,10 @@ class GenerationRun(
 
     fun artifacts(): List<TaskArtifact> = api.artifacts(projectId, taskId)
 
-    fun downloadArtifact(entityName: String, output: OutputStream, keepGoing: () -> Boolean) =
+    internal fun downloadArtifact(entityName: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
         api.downloadArtifact(projectId, taskId, entityName, output, keepGoing)
 
-    fun downloadArtifacts(output: OutputStream, keepGoing: () -> Boolean) =
+    internal fun downloadArtifacts(output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
         api.downloadArtifacts(projectId, taskId, output, keepGoing)
 
     fun close() {
