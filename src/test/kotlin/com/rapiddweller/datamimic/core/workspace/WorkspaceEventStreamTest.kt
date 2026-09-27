@@ -28,13 +28,16 @@ class WorkspaceEventStreamTest {
     private var stored: String? = json.encodeToString(StoredSession.serializer(), StoredSession(origin, "session-1"))
     private val stream = stream()
 
-    private fun stream(reconnectDelaysMs: List<Long>? = null) = WorkspaceEventStream(
+    private fun stream(
+        reconnectDelaysMs: List<Long>? = null,
+        onState: (StreamState) -> Unit = states::add,
+    ) = WorkspaceEventStream(
         HttpClient.newHttpClient(),
         SessionService(HttpClient.newHttpClient(), { stored }, { stored = it }),
         "binding-1",
         "p1",
         onEvent = events::add,
-        onState = states::add,
+        onState = onState,
         reconnectDelaysMs = reconnectDelaysMs ?: listOf(250L, 500L),
     )
 
@@ -108,13 +111,15 @@ class WorkspaceEventStreamTest {
     fun `a late older handshake cannot replace the newer live socket`() {
         server.refuseWith = 503
         server.serve { connection -> connection.text(SNAPSHOT) }
-        val quick = stream(reconnectDelaysMs = listOf(10L, 10L))
+        val gate = CountDownLatch(1)
+        val quick = stream(reconnectDelaysMs = listOf(10L, 10L)) { state ->
+            states += state
+            if (state == StreamState.UNAVAILABLE) server.handshakeGate = gate
+        }
 
         try {
             quick.start()
             repeat(3) { handshakes.poll(5, TimeUnit.SECONDS)!! }
-            val gate = CountDownLatch(1)
-            server.handshakeGate = gate
             handshakes.poll(5, TimeUnit.SECONDS)!!
 
             server.refuseWith = null
