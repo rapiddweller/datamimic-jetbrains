@@ -26,9 +26,9 @@ kotlin {
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
 dependencies {
     // WHY: compile against 2024.2's runtime; the IDE provides the runtime at run time.
-    compileOnly(libs.serialization.core)
-    compileOnly(libs.serialization.json)
-    testImplementation(libs.junit)
+    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.6.0")
+    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.6.0")
+    testImplementation("junit:junit:4.13.2")
 
     // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
     intellijPlatform {

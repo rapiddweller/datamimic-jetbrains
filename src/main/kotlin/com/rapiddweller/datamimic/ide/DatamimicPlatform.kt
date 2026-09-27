@@ -345,10 +345,6 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     fun syncedFile(file: Path): SyncedFile? =
         openWorkspaces().firstNotNullOfOrNull { session -> session.folder.pathOf(file)?.let { SyncedFile(session, it) } }
 
-    private fun closeWorkspaces(release: Boolean): List<Deferred<Unit>> {
-        return synchronized(this) { closeWorkspacesLocked(release) }
-    }
-
     private fun closeWorkspacesLocked(release: Boolean): List<Deferred<Unit>> {
         workspacesOrigin = null
         return workspaces.entries().mapNotNull { (projectId, _) ->

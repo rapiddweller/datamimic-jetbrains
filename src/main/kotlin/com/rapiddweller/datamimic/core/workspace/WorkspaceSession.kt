@@ -15,7 +15,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.net.http.HttpClient
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -160,14 +159,6 @@ class WorkspaceSession(
             completion.invokeOnCompletion { teardownScope.cancel() }
         }
     }
-
-    suspend fun awaitShutdown(release: Boolean) = beginShutdown(release).await()
-
-    /** Signing out: gives the edit locks back to the platform, then stops. Blocking; call off the UI thread. */
-    fun close() = runBlocking { awaitShutdown(release = true) }
-
-    /** The IDE shuts down or unloads the plugin: stops without calling the platform; its leases expire there. */
-    fun dispose(): Deferred<Unit> = beginShutdown(release = false)
 
     fun tree(): WorkspaceTree = cachedTree ?: loadTree()
 
