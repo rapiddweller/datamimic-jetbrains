@@ -14,7 +14,6 @@ class GenerationRun(
     val taskId: String,
     private val startedAt: Long = System.currentTimeMillis(),
     private val now: () -> Long = System::currentTimeMillis,
-    private var awaitingVisibility: Boolean = false,
 ) {
     private val refreshLock = Mutex()
     private var closed = false
@@ -25,6 +24,11 @@ class GenerationRun(
     private var previews: List<PreviewContent> = emptyList()
     private var previewsLoaded = false
     private var finishedAt: Long? = null
+    private var awaitingVisibility = false
+
+    internal fun awaitVisibility() {
+        awaitingVisibility = true
+    }
 
     suspend fun refresh(): GenerationSnapshot = refreshLock.withLock {
         check(!closed) { "The generation view is closed." }

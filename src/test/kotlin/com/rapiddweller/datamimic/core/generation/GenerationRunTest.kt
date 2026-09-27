@@ -161,13 +161,16 @@ class GenerationRunTest {
     fun `newly dispatched task keeps polling until it becomes visible`() = runBlocking {
         sessions.login(platform.origin, "ada@example.com", "secret")
         platform.generationSearchResponse = """{"data":[]}"""
-        val run = GenerationRun(api, "p1", "generation-1", awaitingVisibility = true)
+        assertTrue(GenerationRun(api, "p1", "generation-1").refresh().unavailable)
+
+        val run = GenerationRun(api, "p1", "generation-1")
+        run.awaitVisibility()
 
         assertTrue(run.refresh().needsRefresh)
         assertEquals(0, platform.generationLogReads)
 
         platform.generationSearchResponse = """{"data":[{"task_id":"generation-1","status":"QUEUED"}]}"""
         assertEquals(TaskStatus.QUEUED, run.refresh().status)
-        assertEquals(2, platform.generationStatusReads)
+        assertEquals(3, platform.generationStatusReads)
     }
 }

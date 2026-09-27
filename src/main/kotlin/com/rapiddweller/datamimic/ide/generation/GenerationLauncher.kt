@@ -83,7 +83,8 @@ internal fun startGeneration(
             val dispatch = withBackgroundProgress(project, "Starting data generation for ${identity.projectName}") {
                 withContext(Dispatchers.IO) { generation.dispatch(identity.projectId, taskType) }
             }
-            val run = GenerationRun(generation, identity.projectId, dispatch.taskId, startedAt, awaitingVisibility = true)
+            val run = GenerationRun(generation, identity.projectId, dispatch.taskId, startedAt)
+            run.awaitVisibility()
             if (platform.state.value != auth) {
                 run.close()
                 return@launch rejected()
