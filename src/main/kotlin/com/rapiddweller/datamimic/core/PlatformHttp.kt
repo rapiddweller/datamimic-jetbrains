@@ -17,6 +17,8 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import java.io.InputStream
+import java.io.OutputStream
 
 internal val json = Json {
     ignoreUnknownKeys = true
@@ -151,6 +153,35 @@ class PlatformHttp(
     fun getJson(path: String): String = send(HttpMethod.GET, path).body
 
     fun postJson(path: String, body: String): String = send(HttpMethod.POST, path, RequestBody.Json(body)).body
+
+    /** Copies a successful GET response without retaining its payload in memory. */
+    fun getTo(path: String, output: OutputStream, copy: (InputStream, OutputStream) -> Unit) {
+        val session = sessions.current() ?: throw SessionExpiredException()
+        check(boundOrigin == null || session.origin == boundOrigin) { "The DATAMIMIC session is connected to another platform." }
+        val request = HttpRequest.newBuilder(URI(session.origin.value + path))
+            .timeout(DOWNLOAD_TIMEOUT)
+            .header(PlatformHeader.ORIGIN.wireName, session.origin.value)
+            .header(PlatformHeader.COOKIE.wireName, "$SESSION_COOKIE=${session.sessionId}")
+            .header(PlatformHeader.CLIENT_BINDING.wireName, clientBindingId)
+            .GET()
+            .build()
+        val response = http.send(request, HttpResponse.BodyHandlers.ofInputStream())
+        response.body().use { input ->
+            if (response.statusCode() == 401) {
+                sessions.expire(session)
+                throw SessionExpiredException()
+            }
+            if (response.statusCode() !in 200..299) {
+                PlatformResponse(response.statusCode(), input.readNBytes(200).toString(UTF_8), response.headers()).orThrow(HttpMethod.GET, path)
+            }
+            copy(input, output)
+        }
+    }
+
+    private companion object {
+        // Artifact ZIP creation and streaming can legitimately outlive ordinary JSON GETs.
+        val DOWNLOAD_TIMEOUT: Duration = Duration.ofMinutes(10)
+    }
 }
 
 /** Opens a platform WebSocket authenticated like every request: session cookie, exact Origin and client binding. */

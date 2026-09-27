@@ -6,6 +6,7 @@ package com.rapiddweller.datamimic.core.generation
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.OutputStream
 
 /** Read-only observation of one Platform task. Closing this object never cancels that task. */
 class GenerationRun(
@@ -83,6 +84,14 @@ class GenerationRun(
 
     /** Stops the Platform task. The next [refresh] observes its terminal state. */
     fun stop() = api.stop(taskId)
+
+    fun artifacts(): List<TaskArtifact> = api.artifacts(projectId, taskId)
+
+    fun downloadArtifact(entityName: String, output: OutputStream, keepGoing: () -> Boolean) =
+        api.downloadArtifact(projectId, taskId, entityName, output, keepGoing)
+
+    fun downloadArtifacts(output: OutputStream, keepGoing: () -> Boolean) =
+        api.downloadArtifacts(projectId, taskId, output, keepGoing)
 
     fun close() {
         closed = true
