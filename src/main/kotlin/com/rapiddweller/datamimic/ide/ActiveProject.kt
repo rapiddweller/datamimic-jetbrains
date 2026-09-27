@@ -32,6 +32,7 @@ import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import com.rapiddweller.datamimic.core.workspace.WorkspaceSession
 import com.rapiddweller.datamimic.core.workspace.WorkspaceUpdate
 import com.rapiddweller.datamimic.ide.editing.PlatformEditors
+import com.rapiddweller.datamimic.ide.generation.ensureNativeRunConfiguration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -263,7 +264,9 @@ internal suspend fun disconnectAllWindowsForSignOut() {
 class ActiveProjectStartup : ProjectActivity {
     override suspend fun execute(project: Project) {
         val base = project.basePath ?: return
-        if (ProjectFolder(Path.of(base)).isProjectFolder()) project.activeProject()
+        val identity = ProjectFolder(Path.of(base)).identity() ?: return
+        project.activeProject()
+        ensureNativeRunConfiguration(project, identity)
     }
 }
 

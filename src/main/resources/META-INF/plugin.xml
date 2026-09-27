@@ -25,6 +25,7 @@
     <depends optional="true" config-file="datamimic-lsp.xml">com.intellij.modules.lsp</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <configurationType implementation="com.rapiddweller.datamimic.ide.generation.DatamimicRunConfigurationType"/>
         <!-- id must match TOOL_WINDOW_ID -->
         <toolWindow id="DATAMIMIC" anchor="left" icon="/icons/datamimic.svg"
                     factoryClass="com.rapiddweller.datamimic.ide.ProjectsToolWindowFactory"/>

@@ -6,7 +6,9 @@ package com.rapiddweller.datamimic.ide.generation
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.execution.ui.ExecutionConsole
 import com.intellij.openapi.wm.ToolWindowAnchor
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.components.JBScrollPane
@@ -18,6 +20,7 @@ import com.intellij.util.ui.JBFont
 import com.rapiddweller.datamimic.core.generation.GenerationRun
 import com.rapiddweller.datamimic.core.generation.GenerationSnapshot
 import com.rapiddweller.datamimic.core.generation.PreviewContent
+import com.rapiddweller.datamimic.core.generation.TaskStatus
 import com.rapiddweller.datamimic.ide.ToolWindowScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,7 +80,7 @@ internal object RunResults {
                     true,
                 )
             lateinit var content: com.intellij.ui.content.Content
-            val view = RunResultView(projectName, run, parentScope) {
+            val view = RunResultView(projectName, run, parentScope, null, {}) {
                 toolWindow.contentManager.removeContent(content, true)
             }
             content = ContentFactory.getInstance().createContent(view, "$projectName · ${run.taskId.take(8)}", false).apply {
@@ -96,6 +99,8 @@ private class RunResultView(
     projectName: String,
     private val run: GenerationRun,
     parentScope: CoroutineScope,
+    private val nativeStop: (() -> Unit)?,
+    private val completed: (TaskStatus) -> Unit,
     private val closeView: () -> Unit,
 ) : JPanel(BorderLayout()), Disposable {
     private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext.job))
@@ -113,6 +118,10 @@ private class RunResultView(
     private var observation: Job? = null
     private var actionError: Throwable? = null
     private var stopping = false
+    private var stopRequested = false
+    private var completionReported = false
+    // UNKNOWN/no snapshot is active, like GenerationSnapshot.active.
+    private var active = true
 
     init {
         val header = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
@@ -140,8 +149,10 @@ private class RunResultView(
     private fun stopServerRun() {
         if (stopping) return
         stopping = true
+        stopRequested = nativeStop != null
         stop.isEnabled = false
         retry.isEnabled = false
+        nativeStop?.let { it(); return }
         observation?.cancel()
         scope.launch {
             val error = runCatching { withContext(Dispatchers.IO) { run.stop() } }.exceptionOrNull()
@@ -168,12 +179,26 @@ private class RunResultView(
     }
 
     private fun render(snapshot: GenerationSnapshot) {
+        active = snapshot.active
         state.text = "Status: ${snapshot.status ?: "unavailable"} · Elapsed: ${snapshot.elapsedMillis / 1_000}s"
-        stop.isEnabled = snapshot.active && !stopping
+        stop.isEnabled = snapshot.active && !stopping && !stopRequested
         retry.isEnabled = !stopping
         updateOutput(logScroll, log, snapshot.log.ifBlank { "No log output." })
         updateOutput(errorScroll, errorOutput, errors(snapshot).ifBlank { "No errors." })
         snapshot.previews.filter { previewTabs.add(it.name) }.forEach { tabs.addTab(it.name, component(it)) }
+        if (snapshot.status?.terminal == true && !completionReported) {
+            completionReported = true
+            completed(checkNotNull(snapshot.status))
+        }
+    }
+
+    fun stopFailed(error: Throwable) {
+        actionError = error
+        stopping = false
+        stopRequested = false
+        stop.isEnabled = active
+        retry.isEnabled = true
+        updateOutput(errorScroll, errorOutput, "Stop Server Run failed: ${error.message ?: error.javaClass.simpleName}")
     }
 
     private fun errors(snapshot: GenerationSnapshot): String = listOfNotNull(
@@ -209,5 +234,61 @@ private class RunResultView(
 
     private companion object {
         const val REFRESH_INTERVAL_MS = 3_000L
+    }
+}
+
+/** The Run-tool-window console for a native configuration; disposing it only detaches local observation. */
+internal class NativeGenerationConsole(
+    private val project: Project,
+    private val projectName: String,
+    private val scope: CoroutineScope,
+    private val handler: ServerGenerationProcessHandler,
+) : JPanel(BorderLayout()), ExecutionConsole {
+    private var detached = false
+    private var view: RunResultView? = null
+    private var pendingStopError: Throwable? = null
+
+    init {
+        add(JLabel("Starting $projectName generation…"), BorderLayout.NORTH)
+    }
+
+    fun attach(run: GenerationRun): Boolean {
+        if (detached || project.isDisposed) {
+            run.close()
+            dispose()
+            return false
+        }
+        val result = RunResultView(projectName, run, scope, handler::requestStop, handler::completed, ::dispose)
+        view = result
+        removeAll()
+        add(result, BorderLayout.CENTER)
+        pendingStopError?.let(result::stopFailed)
+        revalidate()
+        repaint()
+        result.start()
+        return true
+    }
+
+    fun stopFailed(error: Throwable) {
+        ApplicationManager.getApplication().invokeLater {
+            val result = view
+            if (result == null) pendingStopError = error else result.stopFailed(error)
+        }
+    }
+
+    fun detach() {
+        if (detached) return
+        detached = true
+        view?.dispose()
+        view = null
+    }
+
+    override fun getComponent(): JComponent = this
+
+    override fun getPreferredFocusableComponent(): JComponent = view ?: this
+
+    override fun dispose() {
+        if (!detached) handler.detachObservation()
+        detach()
     }
 }

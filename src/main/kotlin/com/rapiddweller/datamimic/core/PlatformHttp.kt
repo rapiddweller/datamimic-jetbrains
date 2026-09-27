@@ -117,7 +117,17 @@ class PlatformHttp(
     private val http: HttpClient,
     private val sessions: SessionService,
     val clientBindingId: String,
+    private val boundOrigin: PlatformOrigin? = null,
 ) {
+    constructor(http: HttpClient, sessions: SessionService, clientBindingId: String) : this(http, sessions, clientBindingId, null)
+
+    /** Binds a multi-request operation to one platform without pinning a revocable session cookie. */
+    fun boundTo(origin: PlatformOrigin): PlatformHttp {
+        val session = sessions.current() ?: throw SessionExpiredException()
+        check(session.origin == origin) { "The DATAMIMIC session is connected to another platform." }
+        return PlatformHttp(http, sessions, clientBindingId, origin)
+    }
+
     fun send(
         method: HttpMethod,
         path: String,
@@ -125,6 +135,7 @@ class PlatformHttp(
         headers: Map<PlatformHeader, String> = emptyMap(),
     ): PlatformResponse {
         val session = sessions.current() ?: throw SessionExpiredException()
+        check(boundOrigin == null || session.origin == boundOrigin) { "The DATAMIMIC session is connected to another platform." }
         val sessionHeaders = mapOf(
             PlatformHeader.COOKIE to "$SESSION_COOKIE=${session.sessionId}",
             PlatformHeader.CLIENT_BINDING to clientBindingId,
