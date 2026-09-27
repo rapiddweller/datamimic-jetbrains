@@ -9,6 +9,7 @@ package com.rapiddweller.datamimic.core.generation
 import com.rapiddweller.datamimic.core.HttpMethod
 import com.rapiddweller.datamimic.core.PlatformHeader
 import com.rapiddweller.datamimic.core.PlatformHttp
+import com.rapiddweller.datamimic.core.PlatformSessionFence
 import com.rapiddweller.datamimic.core.PlatformOrigin
 import com.rapiddweller.datamimic.core.encode
 import com.rapiddweller.datamimic.core.json
@@ -25,6 +26,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.concurrent.CancellationException
 
 @Serializable
 enum class TaskType(val label: String) {
@@ -136,6 +140,12 @@ data class CsvColumn(val name: String, val selector: String)
 @Serializable
 private data class PreviewResponse(val preview: List<PreviewRecord>)
 
+@Serializable
+private data class ArtifactMetadataResponse(val artifacts: List<ArtifactMetadata>)
+
+@Serializable
+private data class ArtifactMetadata(val url: String? = null, val size: String? = null)
+
 /** What the IDE renders for one generated product. */
 sealed interface PreviewContent {
     val name: String
@@ -216,12 +226,41 @@ class GenerationApi(private val http: PlatformHttp) {
     fun previews(projectId: String, taskId: String): List<PreviewContent> =
         json.decodeFromString<PreviewResponse>(http.getJson("${base(projectId)}/task/${encode(taskId)}/preview")).preview.map(::toContent)
 
+    fun artifacts(projectId: String, taskId: String): List<TaskArtifact> =
+        json.decodeFromString<ArtifactMetadataResponse>(http.getJson("${base(projectId)}/tasks/${encode(taskId)}/artifacts/metadata"))
+            .artifacts
+            .map { toArtifact(it, projectId, taskId) }
+
+    internal fun downloadArtifact(
+        projectId: String,
+        taskId: String,
+        entityName: String,
+        output: OutputStream,
+        keepGoing: () -> Boolean,
+    ): PlatformSessionFence =
+        download("${base(projectId)}/tasks/${encode(taskId)}/artifacts/${encodeEntityName(entityName)}/download", output, keepGoing)
+
+    internal fun downloadArtifacts(projectId: String, taskId: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
+        download("${base(projectId)}/tasks/${encode(taskId)}/artifacts/download", output, keepGoing)
+
     private fun base(projectId: String) = "/api/v2/projects/${encode(projectId)}"
+
+    private fun download(path: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
+        http.getTo(path, output) { input, destination ->
+            val buffer = ByteArray(DEFAULT_STREAM_BUFFER_SIZE)
+            while (true) {
+                if (!keepGoing()) throw CancellationException("Artifact download cancelled.")
+                val count = input.read(buffer)
+                if (count < 0) return@getTo
+                destination.write(buffer, 0, count)
+            }
+        }
 
     private companion object {
         /** Seconds the platform waits for the run before answering "still running". */
         const val DISPATCH_WAIT_SECONDS = 30
         const val HISTORY_PAGE_SIZE = 20
+        const val DEFAULT_STREAM_BUFFER_SIZE = 64 * 1024
     }
 }
 
@@ -243,6 +282,11 @@ data class GenerationTask(val taskId: String, val status: TaskStatus?, val name:
 }
 
 data class GenerationTaskPage(val tasks: List<GenerationTask>, val page: Int, val totalPages: Int)
+
+/** Metadata is loaded only for a selected successful task. */
+data class TaskArtifact(val entityName: String, val size: String?) {
+    override fun toString(): String = listOfNotNull(entityName, size?.let { "($it)" }).joinToString(" ")
+}
 
 data class TaskLog(val content: String, val completed: Boolean)
 
@@ -267,6 +311,27 @@ internal fun toContent(record: PreviewRecord): PreviewContent = when (record) {
 }
 
 private val prettyJson = Json { prettyPrint = true }
+
+private fun toArtifact(metadata: ArtifactMetadata, projectId: String, taskId: String): TaskArtifact =
+    TaskArtifact(
+        requireNotNull(entityNameFrom(metadata.url, projectId, taskId)) { "The platform returned invalid artifact metadata." },
+        metadata.size,
+    )
+
+private fun entityNameFrom(url: String?, projectId: String, taskId: String): String? {
+    val prefix = "/api/v2/projects/$projectId/tasks/$taskId/artifacts/"
+    val suffix = "/download"
+    if (url == null || !url.startsWith(prefix) || !url.endsWith(suffix)) return null
+    val entity = url.removePrefix(prefix).removeSuffix(suffix)
+    return entity.takeIf { it.isNotBlank() && it !in setOf(".", "..") && '/' !in it && '\\' !in it && it.none { char -> char.code < 0x20 || char.code == 0x7f } }
+}
+
+private fun encodeEntityName(entityName: String): String {
+    require(entityName.isNotBlank() && entityName !in setOf(".", "..") && '/' !in entityName && '\\' !in entityName && entityName.none { it.code < 0x20 || it.code == 0x7f }) {
+        "The platform returned an invalid artifact name."
+    }
+    return encode(entityName).replace("+", "%20")
+}
 
 private fun cell(value: JsonElement?): String = when (value) {
     null -> ""

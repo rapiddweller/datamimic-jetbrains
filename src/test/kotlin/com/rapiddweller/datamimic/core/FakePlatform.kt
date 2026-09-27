@@ -38,12 +38,23 @@ class FakePlatform : AutoCloseable {
     var generationHistoryResponse = """{"data":[],"meta":{"pagination":{"current_page":1,"total_pages":0}}}"""
     var failingGenerationLogReads = 0
     var failingGenerationPreviewReads = 0
+    var generationArtifactMetadata = """{"artifacts":[]}"""
+    var failingGenerationArtifactMetadataReads = 0
+    var artifactPayload = byteArrayOf()
+    var artifactZipPayload = byteArrayOf()
+    var interruptArtifactDownload = false
+    var artifactFirstChunk: ByteArray? = null
+    var artifactChunkGate: CountDownLatch? = null
+    var artifactFirstChunkWritten: CountDownLatch? = null
     val generationRequests = CopyOnWriteArrayList<String>()
     val generationSearchRequests = CopyOnWriteArrayList<String>()
     val cancelledGenerationTasks = CopyOnWriteArrayList<String>()
+    val artifactMetadataPaths = CopyOnWriteArrayList<String>()
+    val artifactDownloadPaths = CopyOnWriteArrayList<String>()
     @Volatile var generationStatusReads = 0
     @Volatile var generationLogReads = 0
     @Volatile var generationPreviewReads = 0
+    @Volatile var generationArtifactMetadataReads = 0
 
     /** path → (content, etag) of project "p1". */
     val files: MutableMap<String, Pair<String, String>> = ConcurrentHashMap(mapOf("model/datamimic.xml" to ("<setup/>" to "etag-1")))
@@ -281,6 +292,31 @@ class FakePlatform : AutoCloseable {
             }
             exchange.respond(200, generationPreview)
         }
+        authenticated("/api/v2/projects/p1/tasks/generation-1/artifacts/") { exchange ->
+            val path = exchange.requestURI.path
+            val prefix = "/api/v2/projects/p1/tasks/generation-1/artifacts/"
+            when {
+                path == "${prefix}metadata" -> {
+                    generationArtifactMetadataReads++
+                    artifactMetadataPaths += exchange.requestURI.rawPath
+                    if (failingGenerationArtifactMetadataReads > 0) {
+                        failingGenerationArtifactMetadataReads--
+                        exchange.error(500, "INTERNAL_SERVER_ERROR", "Artifact metadata temporarily unavailable")
+                    } else {
+                        exchange.respond(200, generationArtifactMetadata)
+                    }
+                }
+                path == "${prefix}download" -> {
+                    artifactDownloadPaths += exchange.requestURI.rawPath
+                    exchange.respondBytes(200, artifactZipPayload)
+                }
+                path.endsWith("/download") -> {
+                    artifactDownloadPaths += exchange.requestURI.rawPath
+                    exchange.respondArtifact(artifactPayload, interruptArtifactDownload, artifactFirstChunk, artifactFirstChunkWritten, artifactChunkGate)
+                }
+                else -> exchange.error(404, "NOT_FOUND", "missing")
+            }
+        }
         authenticated("/api/v2/tasks/generation-1/cancel") { exchange ->
             cancelledGenerationTasks += "generation-1"
             generationStatus = "CANCELLED"
@@ -356,4 +392,35 @@ private fun HttpExchange.respond(status: Int, body: String) {
     val bytes = body.toByteArray(UTF_8)
     sendResponseHeaders(status, if (bytes.isEmpty()) -1 else bytes.size.toLong())
     if (bytes.isNotEmpty()) responseBody.use { it.write(bytes) } else close()
+}
+
+private fun HttpExchange.respondBytes(status: Int, bytes: ByteArray) {
+    sendResponseHeaders(status, if (bytes.isEmpty()) -1 else bytes.size.toLong())
+    if (bytes.isNotEmpty()) responseBody.use { it.write(bytes) } else close()
+}
+
+private fun HttpExchange.respondArtifact(
+    bytes: ByteArray,
+    interrupted: Boolean,
+    firstChunk: ByteArray?,
+    firstChunkWritten: CountDownLatch?,
+    chunkGate: CountDownLatch?,
+) {
+    when {
+        interrupted -> {
+            sendResponseHeaders(200, bytes.size.toLong() + 1)
+            responseBody.use { output -> output.write(bytes, 0, bytes.size.coerceAtMost(1)) }
+        }
+        firstChunk != null -> {
+            sendResponseHeaders(200, 0)
+            responseBody.use { output ->
+                output.write(firstChunk)
+                output.flush()
+                firstChunkWritten?.countDown()
+                chunkGate?.await(5, TimeUnit.SECONDS)
+                output.write(bytes)
+            }
+        }
+        else -> respondBytes(200, bytes)
+    }
 }
