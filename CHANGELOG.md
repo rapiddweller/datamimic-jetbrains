@@ -4,9 +4,18 @@
 
 ## [Unreleased]
 
+## [0.4.0]
+
+- Browse paginated generation task history and reopen task status, logs, and preview samples.
+- View artifacts from successful tasks; save individual files, open text files in the IDE, or download all artifacts
+  as a ZIP.
+- Keep newly accepted tasks observable until the platform persists them, and prevent artifact saves from overwriting
+  concurrent IDE edits.
+
 ## [0.3.0]
 
-- Show live platform generation status, logs, errors, and product previews; stopping requests platform cancellation.
+- Show live platform generation status and logs, surface refresh and stop errors, and show product preview samples
+  when available; stopping requests platform cancellation.
 - Add a local native **DATAMIMIC Generation** Run Configuration for each opened DATAMIMIC project. It supports the
   platform task types and uses the same save, sync, warning, and dispatch path as the project-window action.
 - Give every non-tag CI artifact a traceable SemVer version based on the latest release tag and GitHub run number.

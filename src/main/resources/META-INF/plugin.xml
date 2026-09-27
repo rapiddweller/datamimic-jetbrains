@@ -8,7 +8,7 @@
     <description><![CDATA[
         <p>Work on DATAMIMIC projects in your JetBrains IDE, connected to your DATAMIMIC Enterprise Platform.</p>
         <p><b>Requires a DATAMIMIC Enterprise Platform</b> and an account on it. The plugin does not work without one;
-        support for the open-source DATAMIMIC CE is planned.</p>
+        standalone DATAMIMIC CE projects are not supported.</p>
         <ul>
           <li>Sign in with your platform account and browse your projects in the DATAMIMIC tool window.</li>
           <li>Open a platform project as a normal local project. Files sync both ways, protected by the platform's
@@ -16,7 +16,9 @@
           <li>Completion and checks from the platform's language server, with a status bar switch to turn it on or
               off for the project.</li>
           <li>Generate data from the project window or a native Run Configuration, then follow platform status, logs,
-              errors, and product previews.</li>
+              refresh errors, and preview samples when available.</li>
+          <li>Browse recent generation tasks and reopen their results. Successful tasks expose artifacts that can be
+              saved individually, opened as text in the IDE, or downloaded together as a ZIP.</li>
           <li>Connect IDE agents to the project's MCP server.</li>
         </ul>
         ]]></description>

@@ -3,8 +3,8 @@
 Work on DATAMIMIC Platform projects in your IDE: synced project folders, edit locks, the platform's language server,
 generation runs, and MCP access for IDE agents.
 
-> **Requires a DATAMIMIC Enterprise Platform** and an account on it; the plugin does not work without one. Support for
-> the open-source DATAMIMIC CE is planned.
+> **Requires a DATAMIMIC Enterprise Platform** and an account on it; the plugin does not work without one. Standalone
+> DATAMIMIC CE projects are not supported.
 >
 > Status: early development. Requires a JetBrains IDE 2024.2+; the optional language-server integration requires
 > 2025.2.1+.
@@ -32,10 +32,11 @@ generation runs, and MCP access for IDE agents.
   error*; click it to turn the server on or off for the project, or to check again. Requires JetBrains 2025.2.1+.
 - Generate from the project window or a native **DATAMIMIC Generation** Run Configuration. The configuration is local,
   keeps only the platform/project identity and task type, and validates that the opened folder is connected before it
-  runs. Each run shows platform status, logs, errors, and previews; **Stop** requests platform cancellation, while
-  closing a view only stops local observation.
-
-Local DATAMIMIC CE support is not part of this version; it follows once CE authoring is reworked.
+  runs. Each run shows platform status, logs, refresh errors, and preview samples when available; **Stop** requests
+  platform cancellation, while closing a view only stops local observation.
+- The bottom **DATAMIMIC Generation** tool window lists recent platform tasks. Select a task to reopen its logs and
+  preview samples. Successful tasks also expose **Artifacts**: save one file, open saved text files in the IDE, or
+  download every artifact as a ZIP.
 
 ## Junie routing
 
@@ -54,7 +55,7 @@ is removed.
 ```mermaid
 flowchart TB
   subgraph ide["ide: IntelliJ adapters"]
-    TW["Tool window: projects, open, generation results"]
+    TW["Tool windows: projects, tasks, generation results"]
     RC["Run configuration: generation"]
     GL["GenerationLauncher: save, sync, dispatch"]
     FL["File listener, write access, banners"]
@@ -66,7 +67,7 @@ flowchart TB
     WS["WorkspaceSession: tree, event stream, locks, uploads"]
     SY["ProjectSync and ProjectFolder: three-way sync"]
     GEN[GenerationApi]
-    GR["GenerationRun: status, logs, previews"]
+    GR["GenerationRun: status, logs, previews, artifacts"]
     BR["LspBridge: TCP to WebSocket"]
   end
   TW --> GL
@@ -91,10 +92,10 @@ flowchart TB
 | Package | `./gradlew buildPlugin` |
 
 CI (`.github/workflows/build.yml`) tests and builds pull requests, pushes to `main`, and version tags; the ZIP is
-attached to the run. Non-tag builds use `latest-tag-dev.<github-run-number>` (for example `0.2.1-dev.42`) and are
-development artifacts, not releases. Releasing: add `## [<version>]` to `CHANGELOG.md`, then push `v<version>`. A tag
-build uses the exact tag version, runs the Plugin Verifier, and publishes a GitHub release with the ZIP and that
-CHANGELOG section.
+attached to the run. Non-tag builds use `<highest-reachable-semver-tag>-dev.<github-run-number>` and are development
+artifacts, not releases; local builds default to `0.0.0-dev`. Releasing: add `## [<version>]` to `CHANGELOG.md`, then
+push `v<version>`. A tag build uses the exact tag version, runs the Plugin Verifier, and publishes a GitHub release
+with the ZIP and that CHANGELOG section.
 
 Manual test against a local platform: start it with `DM_PLATFORM_PUBLIC_URL=http://localhost:3000`, then in the sandbox
 IDE open the DATAMIMIC tool window and sign in with `http://localhost:3000` (exactly the public URL).
