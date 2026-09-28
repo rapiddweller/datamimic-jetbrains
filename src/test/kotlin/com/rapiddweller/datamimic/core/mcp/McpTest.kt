@@ -152,7 +152,13 @@ class McpTest {
             File(projectDir, ".git/info/exclude").readLines().filter { it.isNotBlank() }.toSet(),
         )
         if (!isWindows()) assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(config.toPath())))
-        assertTrue(File(projectDir, ".junie/rules/datamimic.md").readText().contains("only `datamimic_*` MCP tools"))
+        val routing = File(projectDir, ".junie/rules/datamimic.md").readText()
+        assertTrue(routing.contains("only the available `datamimic_*` MCP tools"))
+        assertTrue(routing.contains("Never start data generation"))
+        assertTrue(routing.contains("explicit user action"))
+        assertTrue(routing.contains("DATAMIMIC Generation Run configuration"))
+        assertTrue(routing.contains("sign in or reconnect"))
+        assertTrue(routing.contains("or a subagent"))
         assertEquals("user root guidance\n", rootGuidance.readText())
 
         agent.unregister()
@@ -198,6 +204,25 @@ class McpTest {
         assertTrue(ruleWarnings.single().contains("already contains user guidance"))
         assertEquals("user routing\n", rule.readText())
         assertTrue(File(ruleProject, ".junie/mcp/mcp.json").exists())
+    }
+
+    @Test
+    fun `junie upgrades the previous plugin routing rule without replacing user guidance`() {
+        val projectDir = temp.newFolder("previous-routing")
+        val rule = File(projectDir, ".junie/rules/datamimic.md").apply {
+            parentFile.mkdirs()
+            writeText(
+                """# DATAMIMIC Platform routing
+
+For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin with an available read-only `datamimic_*` tool. If those tools are unavailable, stop and report that DATAMIMIC MCP tools are unavailable. Do not fall back to local files, search, terminal commands, or local skills.
+""",
+            )
+        }
+
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+
+        assertTrue(rule.readText().contains("Never start data generation"))
+        assertTrue(rule.readText().contains("sign in or reconnect"))
     }
 
     @Test
