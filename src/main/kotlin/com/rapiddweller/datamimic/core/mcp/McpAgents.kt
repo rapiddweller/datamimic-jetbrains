@@ -135,7 +135,7 @@ class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : Mcp
     private fun mcpPathHasSymbolicLink(): Boolean =
         listOf(".junie", ".junie/mcp", CONFIG_PATH).any { Files.isSymbolicLink(projectDir.resolve(it)) }
 
-    private companion object {
+    internal companion object {
         const val CONFIG_PATH = ".junie/mcp/mcp.json"
         const val EXCLUSIVE_GUIDANCE_PATH = ".junie/AGENTS.md"
         const val ROUTING_RULE_PATH = ".junie/rules/datamimic.md"
