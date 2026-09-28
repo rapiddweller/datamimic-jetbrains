@@ -17,12 +17,16 @@ import com.intellij.openapi.project.ProjectCloseListener
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.util.EnvironmentUtil
 import com.rapiddweller.datamimic.core.mcp.AgentConnection
 import com.rapiddweller.datamimic.core.mcp.ClaudeCodeAgent
+import com.rapiddweller.datamimic.core.mcp.GitIgnore
+import com.rapiddweller.datamimic.core.mcp.JunieAgent
 import com.rapiddweller.datamimic.core.mcp.McpAgent
 import com.rapiddweller.datamimic.core.mcp.Publication
+import com.rapiddweller.datamimic.core.mcp.mcpServerUrl
 import com.rapiddweller.datamimic.core.process.findOnPath
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.FolderClaimException
@@ -247,6 +251,15 @@ internal fun discoverSessionAgents(projectDir: Path, path: String?): List<McpAge
     findOnPath("claude", path)?.let { add(ClaudeCodeAgent(it, projectDir)) }
 }
 
+internal fun registerJunieProject(projectDir: Path, identity: FolderIdentity, path: String?): List<String> =
+    JunieAgent(projectDir, GitIgnore(projectDir, findOnPath("git", path)))
+        .register(mcpServerUrl(identity.origin, identity.projectId))
+
+internal fun refreshJunieFiles(projectDir: Path) {
+    listOf(JunieAgent.CONFIG_PATH, JunieAgent.ROUTING_RULE_PATH)
+        .forEach { VirtualFileManager.getInstance().refreshAndFindFileByNioPath(projectDir.resolve(it)) }
+}
+
 /** Every connected IDE window, so signing out can disconnect them while the session still exists. */
 internal suspend fun disconnectAllWindowsForSignOut() {
     // WHY: serviceIfCreated, so signing out never creates and connects a window that was not connected.
@@ -257,7 +270,24 @@ internal suspend fun disconnectAllWindowsForSignOut() {
 class ActiveProjectStartup : ProjectActivity {
     override suspend fun execute(project: Project) {
         val base = project.basePath ?: return
-        val identity = ProjectFolder(Path.of(base)).identity() ?: return
+        val root = Path.of(base)
+        val identity = ProjectFolder(root).identity() ?: return
+        val warnings = try {
+            withContext(Dispatchers.IO) {
+                registerJunieProject(root, identity, EnvironmentUtil.getValue("PATH"))
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            listOf("Junie MCP: ${e.message ?: e.javaClass.simpleName}")
+        } finally {
+            refreshJunieFiles(root)
+        }
+        if (warnings.isNotEmpty()) {
+            NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
+                .createNotification("Junie setup incomplete", warnings.joinToString("\n"), NotificationType.WARNING)
+                .notify(project)
+        }
         project.activeProject()
         ensureNativeRunConfiguration(project, identity)
     }

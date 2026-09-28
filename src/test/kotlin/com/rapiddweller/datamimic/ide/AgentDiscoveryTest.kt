@@ -4,7 +4,9 @@
 
 package com.rapiddweller.datamimic.ide
 
+import com.rapiddweller.datamimic.core.PlatformOrigin
 import com.rapiddweller.datamimic.core.json
+import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -20,14 +22,15 @@ class AgentDiscoveryTest {
     val temp = TemporaryFolder()
 
     @Test
-    fun `a downloaded project publishes Junie configuration before its first open`() {
-        val projectDir = temp.newFolder("downloaded-project").toPath()
+    fun `a platform project publishes its scoped Junie configuration`() {
+        val projectDir = temp.newFolder("platform-project").toPath()
+        val identity = FolderIdentity(PlatformOrigin.parse("https://dm.example"), "project-1", "Example")
 
-        registerJunieBeforeOpen(projectDir, "https://dm.example/mcp", path = null)
+        registerJunieProject(projectDir, identity, path = null)
 
         val entry = json.parseToJsonElement(Files.readString(projectDir.resolve(".junie/mcp/mcp.json")))
             .jsonObject.getValue("mcpServers").jsonObject.getValue("datamimic-platform").jsonObject
-        assertEquals("https://dm.example/mcp", entry.getValue("url").jsonPrimitive.content)
+        assertEquals("https://dm.example/api/v2/mcp/projects/project-1", entry.getValue("url").jsonPrimitive.content)
         assertFalse("credentials must remain Junie-owned", "headers" in entry)
         val rule = Files.readString(projectDir.resolve(".junie/rules/datamimic.md"))
         assertTrue(rule.contains("only the available `datamimic_*` MCP tools"))
