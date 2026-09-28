@@ -94,7 +94,7 @@ class RunResultsTest : BasePlatformTestCase() {
         assertTrue(followed.get())
     }
 
-    fun `test empty terminal preview is rendered unavailable`() {
+    fun `test native result renders empty preview and artifacts`() {
         val platform = FakePlatform()
         val client = HttpClient.newHttpClient()
         val scope = CoroutineScope(SupervisorJob())
@@ -123,7 +123,7 @@ class RunResultsTest : BasePlatformTestCase() {
                 val preview = checkNotNull(tabbedPane(checkNotNull(console)))
                 val previewComponent = preview.getComponentAt(preview.indexOfTab("Preview sample"))
                 assertTrue(textArea(previewComponent)?.text == "Preview unavailable.")
-                assertTrue(preview.indexOfTab("Artifacts") < 0)
+                assertTrue(preview.indexOfTab("Artifacts") >= 0)
             }
         } finally {
             console?.let { runInEdtAndWait(it::dispose) }

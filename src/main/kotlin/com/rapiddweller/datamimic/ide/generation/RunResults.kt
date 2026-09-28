@@ -734,7 +734,7 @@ internal class NativeGenerationConsole(
             dispose()
             return false
         }
-        val result = RunResultView(projectName, run, scope, handler::requestStop, handler::completed, ::dispose)
+        val result = RunResultView(projectName, run, scope, handler::requestStop, handler::completed, ::dispose, artifactProject = project)
         view = result
         removeAll()
         add(result, BorderLayout.CENTER)
