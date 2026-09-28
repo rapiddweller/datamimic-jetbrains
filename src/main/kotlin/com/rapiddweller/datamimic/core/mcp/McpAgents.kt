@@ -117,10 +117,11 @@ class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : Mcp
         if (routingPathHasSymbolicLink()) {
             return "$ROUTING_RULE_PATH or its parent is a symbolic link; it was left unchanged. Add the DATAMIMIC MCP-only routing manually."
         }
-        if (routingRuleFile.exists() && routingRuleFile.readText() != ROUTING_RULE) {
+        val current = if (routingRuleFile.exists()) routingRuleFile.readText() else null
+        if (current != null && current != ROUTING_RULE && current != PREVIOUS_ROUTING_RULE) {
             return "$ROUTING_RULE_PATH already contains user guidance; it was left unchanged. Add the DATAMIMIC MCP-only routing there."
         }
-        if (!routingRuleFile.exists()) {
+        if (current != ROUTING_RULE) {
             Files.createDirectories(routingRuleFile.parent)
             Files.writeString(routingRuleFile, ROUTING_RULE)
         }
@@ -139,10 +140,21 @@ class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : Mcp
         const val EXCLUSIVE_GUIDANCE_PATH = ".junie/AGENTS.md"
         const val ROUTING_RULE_PATH = ".junie/rules/datamimic.md"
         const val SERVERS_KEY = "mcpServers"
-        val ROUTING_RULE = """
+        val PREVIOUS_ROUTING_RULE = """
             # DATAMIMIC Platform routing
 
             For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin with an available read-only `datamimic_*` tool. If those tools are unavailable, stop and report that DATAMIMIC MCP tools are unavailable. Do not fall back to local files, search, terminal commands, or local skills.
+        """.trimIndent() + "\n"
+        val ROUTING_RULE = """
+            # DATAMIMIC Platform routing
+
+            For every request about this DATAMIMIC Platform project, use only the available `datamimic_*` MCP tools. Begin with an available read-only `datamimic_*` tool.
+
+            Never inspect or modify DATAMIMIC project content through workspace files, local filesystem or search, terminal commands, local skills, another MCP server, or a subagent. Do not fall back when a DATAMIMIC tool is unavailable or returns an error.
+
+            Never start data generation or execute the project through agent tools. Generation is an explicit user action through the IDE's DATAMIMIC Generation Run configuration or the Platform UI.
+
+            If the `datamimic_*` tools are unavailable, stop and ask the user to sign in or reconnect the DATAMIMIC project.
         """.trimIndent() + "\n"
     }
 }
