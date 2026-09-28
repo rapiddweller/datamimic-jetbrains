@@ -63,6 +63,21 @@ class AgentConnectionTest {
     }
 
     @Test
+    fun `a project without session agents does not create a project token`() {
+        val noAgentConnection = AgentConnection(
+            activate = { events += "activate $it" },
+            deactivate = {},
+            server = { error("must not create a token") },
+            agents = { emptyList() },
+        )
+
+        val publication = noAgentConnection.connect("A")
+
+        assertEquals(listOf("activate A"), events)
+        assertEquals(null, publication.server)
+    }
+
+    @Test
     fun `a registered agent can report a non-fatal setup warning`() {
         val warningAgent = object : McpAgent {
             override val displayName = "Warning Agent"

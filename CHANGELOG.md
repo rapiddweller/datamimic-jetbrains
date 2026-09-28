@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- Publish Junie's credential-free project MCP configuration before the first project open, keep it across IDE
+  restarts, and let Junie manage the standard OAuth grant.
+
 ## [0.4.0]
 
 - Browse paginated generation task history and reopen task status, logs, and preview samples.

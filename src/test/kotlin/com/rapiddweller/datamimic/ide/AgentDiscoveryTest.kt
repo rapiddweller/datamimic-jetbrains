@@ -5,47 +5,32 @@
 package com.rapiddweller.datamimic.ide
 
 import com.rapiddweller.datamimic.core.json
-import com.rapiddweller.datamimic.core.mcp.AgentConnection
-import com.rapiddweller.datamimic.core.mcp.McpServer
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
-import java.time.Instant
 
 class AgentDiscoveryTest {
     @get:Rule
     val temp = TemporaryFolder()
 
     @Test
-    fun `an activated project discovers Junie and writes its MCP configuration`() {
-        val projectDir = temp.newFolder("project").toPath()
-        val userHome = temp.newFolder("home").toPath()
-        Files.createDirectories(userHome.resolve(".junie"))
-        var activated = false
-        val connection = AgentConnection(
-            activate = { activated = true },
-            deactivate = {},
-            server = { McpServer("https://dm.example/mcp", mapOf("Authorization" to "Bearer token"), Instant.EPOCH) },
-            agents = { discoverAgents(projectDir, path = null, userHome) },
-        )
+    fun `a downloaded project publishes Junie configuration before its first open`() {
+        val projectDir = temp.newFolder("downloaded-project").toPath()
 
-        val publication = connection.connect("p1")
+        registerJunieBeforeOpen(projectDir, "https://dm.example/mcp", path = null)
 
-        assertTrue(activated)
-        assertEquals(listOf("Junie"), publication.connected)
-        val config = json.parseToJsonElement(Files.readString(projectDir.resolve(".junie/mcp/mcp.json"))).jsonObject
-        assertEquals("https://dm.example/mcp", config.getValue("mcpServers").jsonObject.getValue("datamimic-platform").jsonObject.getValue("url").jsonPrimitive.content)
+        val entry = json.parseToJsonElement(Files.readString(projectDir.resolve(".junie/mcp/mcp.json")))
+            .jsonObject.getValue("mcpServers").jsonObject.getValue("datamimic-platform").jsonObject
+        assertEquals("https://dm.example/mcp", entry.getValue("url").jsonPrimitive.content)
+        assertFalse("credentials must remain Junie-owned", "headers" in entry)
         val rule = Files.readString(projectDir.resolve(".junie/rules/datamimic.md"))
         assertTrue(rule.contains("only the available `datamimic_*` MCP tools"))
-        assertTrue(rule.contains("Begin with an available read-only `datamimic_*` tool"))
-        assertTrue(rule.contains("Never inspect or modify DATAMIMIC project content"))
         assertTrue(rule.contains("Never start data generation"))
-        assertTrue(rule.contains("explicit user action"))
-        assertTrue(rule.contains("stop and ask the user to sign in or reconnect"))
     }
 }

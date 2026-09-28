@@ -38,6 +38,8 @@ class AgentConnection(
     }
 
     private fun publish(projectId: String): Publication {
+        val availableAgents = agents()
+        if (availableAgents.isEmpty()) return Publication(null, emptyList(), emptyList())
         val current = try {
             server(projectId)
         } catch (e: Exception) {
@@ -45,7 +47,7 @@ class AgentConnection(
             unregisterAgents()
             return Publication(null, emptyList(), listOf("Project token: ${e.message ?: e.javaClass.simpleName}"))
         }
-        val outcomes = agents().associateWith { agent -> runCatching { agent.register(current) } }
+        val outcomes = availableAgents.associateWith { agent -> runCatching { agent.register(current) } }
         registered = registered || outcomes.values.any { it.isSuccess }
         return Publication(
             current,

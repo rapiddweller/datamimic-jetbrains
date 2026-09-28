@@ -17,7 +17,12 @@ import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.withModalProgress
 import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
+import com.intellij.util.EnvironmentUtil
 import com.rapiddweller.datamimic.core.PlatformProject
+import com.rapiddweller.datamimic.core.mcp.GitIgnore
+import com.rapiddweller.datamimic.core.mcp.JunieAgent
+import com.rapiddweller.datamimic.core.mcp.mcpServerUrl
+import com.rapiddweller.datamimic.core.process.findOnPath
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import kotlinx.coroutines.CancellationException
@@ -110,13 +115,26 @@ internal suspend fun openPlatformProject(project: Project?, target: PlatformProj
     try {
         val root = ProjectFolder.locationFor(PROJECTS_HOME, origin, target)
         if (ProjectUtil.findAndFocusExistingProjectForPath(root) != null) return
-        withModalProgress(owner(project), "Downloading ${target.name}", Cancellation.cancellable()) {
+        val junieWarnings = withModalProgress(owner(project), "Downloading ${target.name}", Cancellation.cancellable()) {
             withContext(Dispatchers.IO) {
                 val folder = ProjectFolder(root)
                 platform.workspace(target.id, folder, FolderIdentity(origin, target.id, target.name)).sync.syncNow()
+                runCatching {
+                    registerJunieBeforeOpen(
+                        root,
+                        mcpServerUrl(origin, target.id),
+                        EnvironmentUtil.getValue("PATH"),
+                    )
+                }.getOrElse {
+                    LOG.warn("Preparing Junie for ${target.id} failed", it)
+                    listOf("Junie MCP: ${it.message ?: it.javaClass.simpleName}")
+                }
             }
         }
-        openDownloadedProject(root)
+        val openedProject = openDownloadedProject(root)
+        if (junieWarnings.isNotEmpty()) {
+            Messages.showWarningDialog(openedProject ?: project, junieWarnings.joinToString("\n"), "Junie Setup Incomplete")
+        }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -130,5 +148,9 @@ internal suspend fun openDownloadedProject(root: Path) =
     ProjectUtil.openOrImportAsync(root, downloadedProjectTask())
 
 internal fun downloadedProjectTask(): OpenProjectTask = OpenProjectTask.build().withForceOpenInNewFrame(true)
+
+internal fun registerJunieBeforeOpen(projectDir: Path, serverUrl: String, path: String?): List<String> {
+    return JunieAgent(projectDir, GitIgnore(projectDir, findOnPath("git", path))).register(serverUrl)
+}
 
 private fun owner(project: Project?): ModalTaskOwner = project?.let(ModalTaskOwner::project) ?: ModalTaskOwner.guess()

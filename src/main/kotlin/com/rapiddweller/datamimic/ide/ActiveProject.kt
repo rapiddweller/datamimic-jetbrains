@@ -17,13 +17,10 @@ import com.intellij.openapi.project.ProjectCloseListener
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.util.EnvironmentUtil
 import com.rapiddweller.datamimic.core.mcp.AgentConnection
 import com.rapiddweller.datamimic.core.mcp.ClaudeCodeAgent
-import com.rapiddweller.datamimic.core.mcp.GitIgnore
-import com.rapiddweller.datamimic.core.mcp.JunieAgent
 import com.rapiddweller.datamimic.core.mcp.McpAgent
 import com.rapiddweller.datamimic.core.mcp.Publication
 import com.rapiddweller.datamimic.core.process.findOnPath
@@ -42,7 +39,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
@@ -83,13 +79,13 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
                         } else {
                             reconnect?.cancel()
                             renewal?.cancel()
-                            withContext(Dispatchers.IO) { updateAgents { connection.leave() } }
+                            withContext(Dispatchers.IO) { connection.leave() }
                             notifyOtherPlatform(identity)
                         }
                         // WHY: an expired session keeps the folder's sync state, so local edits upload after signing in again.
                         is AuthState.SignedOut -> {
                             renewal?.cancel()
-                            withContext(Dispatchers.IO) { updateAgents { connection.unregisterAgents() } }
+                            withContext(Dispatchers.IO) { connection.unregisterAgents() }
                         }
                         AuthState.Unknown -> Unit
                     }
@@ -104,7 +100,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     /** Before signing out: disconnects the agents and gives locks and their token back while the session still exists. */
     suspend fun disconnectForSignOut() {
         renewal?.cancel()
-        withContext(Dispatchers.IO) { updateAgents { connection.leave() } }
+        withContext(Dispatchers.IO) { connection.leave() }
     }
 
     /** UI thread, while the window closes: agents must not keep a live token for a window that is gone. */
@@ -112,13 +108,13 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
         renewal?.cancel()
         if (connection.activeProjectId == null) return
         runWithModalProgressBlocking(project, "Disconnecting DATAMIMIC agents") {
-            withTimeoutOrNull(CLOSE_TIMEOUT_MS) { withContext(Dispatchers.IO) { updateAgents { connection.leave() } } }
+            withTimeoutOrNull(CLOSE_TIMEOUT_MS) { withContext(Dispatchers.IO) { connection.leave() } }
         }
     }
 
     private suspend fun connect(target: FolderIdentity) {
         renewal?.cancel()
-        val publication = withContext(Dispatchers.IO) { updateAgents { connection.connect(target.projectId) } }
+        val publication = withContext(Dispatchers.IO) { connection.connect(target.projectId) }
         session()?.let(::watch)
         report(target, publication)
         val server = publication.server ?: return
@@ -225,7 +221,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     /** IDE agents of this window that can be connected automatically. */
     private fun agents(): List<McpAgent> {
         val projectDir = folder?.root ?: return emptyList()
-        return discoverAgents(projectDir, EnvironmentUtil.getValue("PATH"), Path.of(System.getProperty("user.home")))
+        return discoverSessionAgents(projectDir, EnvironmentUtil.getValue("PATH"))
     }
 
     private fun group() = NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
@@ -235,14 +231,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     /** Only reached without [leaveOnClose], e.g. when the plugin is unloaded: best effort on the app scope. */
     override fun dispose() {
         if (connection.activeProjectId == null) return
-        platform.scope.launch(Dispatchers.IO) { updateAgents { connection.leave() } }
-    }
-
-    /** NIO writes are invisible to Junie's VFS listener until the IDE refreshes them. */
-    private fun <T> updateAgents(action: () -> T): T = try {
-        action()
-    } finally {
-        folder?.root?.let(::refreshJunieFiles)
+        platform.scope.launch(Dispatchers.IO) { connection.leave() }
     }
 
     private companion object {
@@ -254,17 +243,8 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
 internal fun Project.activeProject(): ActiveProject = getService(ActiveProject::class.java)
 
 /** Discovers agents from the actual user environment; callers provide paths so startup behavior is testable. */
-internal fun discoverAgents(projectDir: Path, path: String?, userHome: Path): List<McpAgent> = buildList {
+internal fun discoverSessionAgents(projectDir: Path, path: String?): List<McpAgent> = buildList {
     findOnPath("claude", path)?.let { add(ClaudeCodeAgent(it, projectDir)) }
-    // WHY: Junie keeps its state in ~/.junie; without it Junie is not in use and gets no token on disk.
-    if (Files.isDirectory(userHome.resolve(".junie"))) {
-        add(JunieAgent(projectDir, GitIgnore(projectDir, findOnPath("git", path))))
-    }
-}
-
-internal fun refreshJunieFiles(projectDir: Path) {
-    listOf(JunieAgent.CONFIG_PATH, JunieAgent.ROUTING_RULE_PATH)
-        .forEach { VirtualFileManager.getInstance().refreshAndFindFileByNioPath(projectDir.resolve(it)) }
 }
 
 /** Every connected IDE window, so signing out can disconnect them while the session still exists. */

@@ -11,7 +11,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -51,36 +50,26 @@ class ClaudeCodeAgent(private val cli: Path, private val projectDir: Path) : Mcp
 }
 
 /**
- * Junie, through the project's `.junie/mcp/mcp.json`: the project-level file scopes the server to this IDE window.
- * The plugin also owns one routing rule; neither it nor the MCP entry replaces user guidance.
+ * Junie, through the project's `.junie/mcp/mcp.json`. The URL-only entry is present before the project opens, so
+ * Junie discovers it during startup and owns its OAuth grant. The plugin also owns one routing rule.
  */
-class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : McpAgent {
-    override val displayName = "Junie"
-
+class JunieAgent(private val projectDir: Path, private val git: GitIgnore) {
     private val configFile: Path = projectDir.resolve(CONFIG_PATH)
     private val routingRuleFile: Path = projectDir.resolve(ROUTING_RULE_PATH)
 
-    override fun register(server: McpServer): List<String> {
+    fun register(serverUrl: String): List<String> {
         if (mcpPathHasSymbolicLink()) {
-            throw McpAgentException("Junie: $CONFIG_PATH or its parent is a symbolic link, so the DATAMIMIC token is not written.")
+            throw McpAgentException("Junie: $CONFIG_PATH or its parent is a symbolic link, so the DATAMIMIC configuration is not written.")
         }
         if (git.isTracked(CONFIG_PATH)) {
-            throw McpAgentException("Junie: $CONFIG_PATH is tracked by Git, so the DATAMIMIC token is not written into it.")
+            throw McpAgentException("Junie: $CONFIG_PATH is tracked by Git, so the plugin leaves it unchanged.")
         }
         val currentServers = readServers()
         val warning = publishRoutingRule()
         excludeFromGit(CONFIG_PATH)
-        val entry = buildJsonObject {
-            put("url", server.url)
-            putJsonObject("headers") { server.headers.forEach { (name, value) -> put(name, value) } }
-        }
+        val entry = buildJsonObject { put("url", serverUrl) }
         writeServers(currentServers + (MCP_SERVER_NAME to entry))
         return listOfNotNull(warning)
-    }
-
-    override fun unregister() {
-        if (mcpPathHasSymbolicLink()) return
-        if (configFile.exists()) writeServers(readServers() - MCP_SERVER_NAME)
     }
 
     private fun readConfig(): JsonObject =
