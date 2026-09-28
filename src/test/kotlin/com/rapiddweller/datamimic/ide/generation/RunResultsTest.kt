@@ -4,6 +4,7 @@
 
 package com.rapiddweller.datamimic.ide.generation
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -20,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import java.awt.Component
 import java.awt.Container
@@ -127,6 +129,44 @@ class RunResultsTest : BasePlatformTestCase() {
             }
         } finally {
             console?.let { runInEdtAndWait(it::dispose) }
+            scope.cancel()
+            client.shutdownNow()
+            platform.close()
+        }
+    }
+
+    fun `test generation result tabs use native platform icons`() {
+        val platform = FakePlatform()
+        val client = HttpClient.newHttpClient()
+        val scope = CoroutineScope(SupervisorJob())
+        var view: RunResultView? = null
+        try {
+            platform.generationStatus = "SUCCESS"
+            val sessions = SessionService(client, { null }, {})
+            sessions.login(platform.origin, "ada@example.com", "secret")
+            val run = GenerationRun(GenerationApi(PlatformHttp(client, sessions, "binding")), "p1", "generation-1")
+            runInEdtAndWait {
+                view = RunResultView("Payments", run, scope, null, {}, {}, artifactProject = project).also { it.start() }
+            }
+
+            val ready = AtomicBoolean()
+            PlatformTestUtil.waitWithEventsDispatching("generation tabs were not rendered", {
+                runInEdtAndWait {
+                    val tabs = tabbedPane(checkNotNull(view))
+                    ready.set(tabs?.indexOfTab("Artifacts")?.let { it >= 0 } == true)
+                }
+                ready.get()
+            }, 5)
+
+            runInEdtAndWait {
+                val tabs = checkNotNull(tabbedPane(checkNotNull(view)))
+                assertSame(AllIcons.Nodes.Console, tabs.getIconAt(tabs.indexOfTab("Log")))
+                assertSame(AllIcons.General.Error, tabs.getIconAt(tabs.indexOfTab("Errors")))
+                assertSame(AllIcons.Actions.Preview, tabs.getIconAt(tabs.indexOfTab("Preview sample")))
+                assertSame(AllIcons.Nodes.Artifact, tabs.getIconAt(tabs.indexOfTab("Artifacts")))
+            }
+        } finally {
+            view?.let { runInEdtAndWait(it::dispose) }
             scope.cancel()
             client.shutdownNow()
             platform.close()

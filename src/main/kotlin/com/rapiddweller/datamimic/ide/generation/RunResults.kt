@@ -4,6 +4,7 @@
 
 package com.rapiddweller.datamimic.ide.generation
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ApplicationManager
@@ -128,6 +129,7 @@ internal object RunResults {
             is GenerationTasksView -> component
             else -> GenerationTasksView(project, parentScope).also { tasks ->
                 ContentFactory.getInstance().createContent(tasks, "Tasks", false).apply {
+                    icon = AllIcons.Actions.ListFiles
                     isCloseable = false
                     setDisposer(tasks)
                 }.also(toolWindow.contentManager::addContent)
@@ -142,6 +144,7 @@ class GenerationTasksToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val view = GenerationTasksView(project, project.getService(ToolWindowScope::class.java).scope)
         toolWindow.contentManager.addContent(ContentFactory.getInstance().createContent(view, "Tasks", false).apply {
+            icon = AllIcons.Actions.ListFiles
             isCloseable = false
             setDisposer(view)
         })
@@ -365,7 +368,7 @@ private class GenerationTasksView(private val project: Project, parentScope: Cor
     }
 }
 
-private class RunResultView(
+internal class RunResultView(
     projectName: String,
     private val run: GenerationRun,
     parentScope: CoroutineScope,
@@ -408,8 +411,8 @@ private class RunResultView(
             add(close)
         }
         add(header, BorderLayout.NORTH)
-        tabs.addTab("Log", logScroll)
-        tabs.addTab("Errors", errorScroll)
+        tabs.addTab("Log", AllIcons.Nodes.Console, logScroll)
+        tabs.addTab("Errors", AllIcons.General.Error, errorScroll)
         tabs.addChangeListener { if (tabs.selectedComponent === artifactBrowser) artifactBrowser?.load() }
         add(tabs, BorderLayout.CENTER)
         stop.addActionListener { stopServerRun() }
@@ -467,14 +470,15 @@ private class RunResultView(
         retry.isEnabled = !stopping
         updateOutput(logScroll, log, snapshot.log.ifBlank { "No log output." })
         updateOutput(errorScroll, errorOutput, errors(snapshot).ifBlank { "No errors." })
-        snapshot.previews.filter { previewTabs.add(it.name) }.forEach { tabs.addTab("Preview sample: ${it.name}", component(it)) }
+        snapshot.previews.filter { previewTabs.add(it.name) }
+            .forEach { tabs.addTab("Preview sample: ${it.name}", AllIcons.Actions.Preview, component(it)) }
         if (snapshot.previewsLoaded && snapshot.previews.isEmpty() && previewTabs.add("Preview unavailable")) {
-            tabs.addTab("Preview sample", text("Preview unavailable."))
+            tabs.addTab("Preview sample", AllIcons.Actions.Preview, text("Preview unavailable."))
         }
         if (snapshot.status?.succeeded == true && artifactBrowser == null && artifactProject != null) {
             ArtifactBrowser(artifactProject, run, scope, current).also {
                 artifactBrowser = it
-                tabs.addTab("Artifacts", it)
+                tabs.addTab("Artifacts", AllIcons.Nodes.Artifact, it)
             }
         }
         if (snapshot.status?.succeeded != true) {
