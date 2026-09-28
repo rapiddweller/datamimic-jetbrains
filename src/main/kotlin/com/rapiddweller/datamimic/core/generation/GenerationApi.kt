@@ -173,7 +173,6 @@ class GenerationApi(private val http: PlatformHttp) {
         val body = buildJsonObject {
             putJsonObject("filters") {
                 put("task_id", taskId)
-                put("get_artifacts_metadata", false)
             }
             putJsonObject("pagination") { put("page", 1); put("per_page", 1) }
         }
@@ -186,7 +185,6 @@ class GenerationApi(private val http: PlatformHttp) {
     fun history(projectId: String, page: Int): GenerationTaskPage {
         val body = buildJsonObject {
             putJsonObject("filters") {
-                put("get_artifacts_metadata", false)
                 putJsonArray("routing_keys") { GenerationTaskRoute.entries.forEach { add(JsonPrimitive(it.routingKey)) } }
             }
             putJsonObject("pagination") {
