@@ -4,9 +4,30 @@
 
 ## [Unreleased]
 
-- Rename the task-history tool window to **Generation Tasks**, add distinct native icons, and consolidate preview
-  samples into one selectable Preview tab.
-- Replace the dense wordmark plugin logo with a compact gears-only logo for the IDE and Marketplace.
+## [0.5.0]
+
+### Features
+
+- Browse generation task history and reopen status, logs, preview samples, and artifacts from successful tasks.
+- Save individual artifacts, open saved text files in the IDE, or download all artifacts as a ZIP.
+- Connect Junie to the active project's MCP server with a short-lived project access token created from the existing
+  platform session, renewed automatically, and kept in local Git-ignored configuration.
+
+### Improvements
+
+- Show artifacts in results from native **DATAMIMIC Generation** Run Configurations as well as in task history.
+- Consolidate preview samples into one selectable Preview tab, rename the tool window to **Generation Tasks**, and use
+  distinct native icons plus a compact gears-only plugin logo.
+- Keep newly accepted tasks visible while the platform persists them, and prevent artifact saves from overwriting
+  concurrent IDE edits.
+- Keep Junie on project-scoped DATAMIMIC MCP tools and leave data generation as an explicit user action.
+
+### Fixes
+
+- Fix generation task history with the Platform 4.0.1 task API and show useful validation details for rejected
+  requests.
+- Refresh plugin-managed Junie files in the IDE after registration, renewal, and cleanup.
+- Make the development artifact downloaded from GitHub Actions directly installable in JetBrains IDEs.
 
 ## [0.4.0]
 

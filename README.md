@@ -93,11 +93,12 @@ flowchart TB
 | Run an IDE with the plugin | `./gradlew runIde` |
 | Package | `./gradlew buildPlugin` |
 
-CI (`.github/workflows/build.yml`) tests and builds pull requests, pushes to `main`, and version tags; the ZIP is
-attached to the run. Non-tag builds use `<highest-reachable-semver-tag>-dev.<github-run-number>` and are development
-artifacts, not releases; local builds default to `0.0.0-dev`. Releasing: add `## [<version>]` to `CHANGELOG.md`, then
-push `v<version>`. A tag build uses the exact tag version, runs the Plugin Verifier, and publishes a GitHub release
-with the ZIP and that CHANGELOG section.
+CI (`.github/workflows/build.yml`) tests and builds pull requests, pushes to `main`, and version tags. The downloaded
+`datamimic-plugin.zip` artifact is directly installable with **Install Plugin from Disk**. Non-tag builds use
+`<highest-reachable-semver-tag>-dev.<github-run-number>` and are development artifacts, not releases; local builds
+default to `0.0.0-dev`. Releasing: add `## [<version>]` to `CHANGELOG.md`, then push `v<version>`. A tag build uses the
+exact tag version, puts that CHANGELOG section into the plugin's JetBrains change notes, runs the Plugin Verifier, and
+publishes a GitHub release with the original versioned distribution ZIP.
 
 Manual test against a local platform: start it with `DM_PLATFORM_PUBLIC_URL=http://localhost:3000`, then in the sandbox
 IDE open the DATAMIMIC tool window and sign in with `http://localhost:3000` (exactly the public URL).

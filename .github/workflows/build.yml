@@ -51,6 +51,16 @@ jobs:
       - name: Test and build the plugin
         run: ./gradlew $VERSION_ARG test buildPlugin verifyPluginStructure verifyPluginProjectConfiguration
 
+      # GitHub wraps uploaded files in another ZIP. Upload the unpacked distribution so the downloaded artifact
+      # itself has the plugin root at its top level and works with "Install Plugin from Disk".
+      - name: Prepare the installable development artifact
+        run: |
+          mkdir -p build/actions-plugin
+          unzip -q build/distributions/*.zip -d build/actions-plugin
+          plugin_jar="$(find build/actions-plugin -path '*/lib/*.jar' -type f -print -quit)"
+          test -n "$plugin_jar"
+          unzip -p "$plugin_jar" META-INF/plugin.xml | grep -q '<id>com.rapiddweller.datamimic</id>'
+
       # WHY: only for releases; it downloads several IDE versions (about 4 GB) to check compatibility.
       - name: Verify compatibility with current and upcoming IDEs
         if: startsWith(github.ref, 'refs/tags/')
@@ -59,6 +69,14 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: datamimic-plugin
+          path: build/actions-plugin
+          if-no-files-found: error
+
+      # Tagged releases need the original versioned Gradle distribution as their GitHub release asset.
+      - uses: actions/upload-artifact@v7
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: datamimic-release-archive
           path: build/distributions/*.zip
           if-no-files-found: error
 
@@ -81,7 +99,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: datamimic-plugin
+          name: datamimic-release-archive
           path: dist
 
       - name: Publish the GitHub release

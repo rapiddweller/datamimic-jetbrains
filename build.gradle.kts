@@ -11,6 +11,7 @@ plugins {
     id("org.jetbrains.kotlin.jvm")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jetbrains.intellij.platform")
+    id("org.jetbrains.changelog") version "2.5.0"
 }
 
 // WHY: built and tested on 2025.3, but must also run on 2024.2, which ships Kotlin 1.9.
