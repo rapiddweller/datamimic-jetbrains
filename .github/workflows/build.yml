@@ -57,7 +57,7 @@ jobs:
         run: |
           mkdir -p build/actions-plugin
           unzip -q build/distributions/*.zip -d build/actions-plugin
-          plugin_jar="$(find build/actions-plugin -path '*/lib/*.jar' -type f -print -quit)"
+          plugin_jar="$(find build/actions-plugin -path '*/lib/datamimic-*.jar' -type f -print -quit)"
           test -n "$plugin_jar"
           unzip -p "$plugin_jar" META-INF/plugin.xml | grep -q '<id>com.rapiddweller.datamimic</id>'
 
