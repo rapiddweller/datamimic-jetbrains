@@ -6,6 +6,9 @@
 
 ## [0.5.0]
 
+Generation history, previews, and artifacts are now first-class IDE workflows, with automatic project-scoped Junie
+MCP access and a cleaner task UI.
+
 ### Features
 
 - Browse generation task history and reopen status, logs, preview samples, and artifacts from successful tasks.
