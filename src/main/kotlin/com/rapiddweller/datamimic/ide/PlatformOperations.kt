@@ -70,8 +70,6 @@ internal class PlatformOperations(
     }
 
     fun signOut() = perform("Sign Out Failed") {
-        // WHY: agents, locks and project tokens can only be given back while the session still exists.
-        disconnectAllWindowsForSignOut()
         val revoked = withContext(Dispatchers.IO) { platform.signOut() }
         if (!revoked) notify("Signed out locally. The platform was unreachable, so the session expires there on its own.", NotificationType.WARNING)
     }

@@ -25,7 +25,7 @@ class AgentConnectionTest {
     }
     private val connection = AgentConnection(
         activate = { events += "activate $it" },
-        deactivate = { events += "deactivate $it" },
+        deactivate = { projectId, beforeLastDeactivate -> beforeLastDeactivate(); events += "deactivate $projectId" },
         server = { id ->
             if (id in failingProjects) throw IllegalStateException("no token for $id")
             McpServer(id, emptyMap(), Instant.EPOCH)
@@ -43,14 +43,14 @@ class AgentConnectionTest {
     }
 
     @Test
-    fun `when a renewed token cannot be created, no agent keeps pointing at the old one`() {
+    fun `when a replacement token cannot be created, agents keep their still-valid registration`() {
         connection.connect("A")
         events.clear()
         failingProjects += "A"
 
         val publication = connection.connect("A")
 
-        assertEquals(listOf("unregister"), events)
+        assertEquals(emptyList<String>(), events)
         assertEquals(listOf("Project token: no token for A"), publication.failures)
     }
 
@@ -63,13 +63,28 @@ class AgentConnectionTest {
     }
 
     @Test
+    fun `a project without session agents does not create a project token`() {
+        val noAgentConnection = AgentConnection(
+            activate = { events += "activate $it" },
+            deactivate = { _, _ -> },
+            server = { error("must not create a token") },
+            agents = { emptyList() },
+        )
+
+        val publication = noAgentConnection.connect("A")
+
+        assertEquals(listOf("activate A"), events)
+        assertEquals(null, publication.server)
+    }
+
+    @Test
     fun `a registered agent can report a non-fatal setup warning`() {
         val warningAgent = object : McpAgent {
             override val displayName = "Warning Agent"
             override fun register(server: McpServer) = listOf("project guidance overrides routing")
             override fun unregister() = Unit
         }
-        val warningConnection = AgentConnection({}, {}, { McpServer(it, emptyMap(), Instant.EPOCH) }, { listOf(warningAgent) })
+        val warningConnection = AgentConnection({}, { _, beforeLastDeactivate -> beforeLastDeactivate() }, { McpServer(it, emptyMap(), Instant.EPOCH) }, { listOf(warningAgent) })
 
         val publication = warningConnection.connect("A")
 
@@ -87,5 +102,27 @@ class AgentConnectionTest {
 
         assertEquals(listOf("unregister", "deactivate A"), events)
         assertEquals(null, connection.activeProjectId)
+    }
+
+    @Test
+    fun `only the last window unregisters shared agents`() {
+        var windows = 0
+        fun sharedConnection() = AgentConnection(
+            activate = { windows++; events += "activate $it" },
+            deactivate = { projectId, beforeLastDeactivate -> if (--windows == 0) beforeLastDeactivate(); events += "deactivate $projectId" },
+            server = { McpServer(it, emptyMap(), Instant.EPOCH) },
+            agents = { listOf(agent) },
+        )
+        val first = sharedConnection()
+        val second = sharedConnection()
+        first.connect("A")
+        second.connect("A")
+        events.clear()
+
+        first.leave()
+        assertEquals(listOf("deactivate A"), events)
+
+        second.leave()
+        assertEquals(listOf("deactivate A", "unregister", "deactivate A"), events)
     }
 }

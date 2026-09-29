@@ -23,8 +23,9 @@ generation runs, and MCP access for IDE agents.
   or *Delete on platform…*.
 - Each window is one platform project, like in the platform UI; it scopes files, locks and IDE agents
   ([ADR 0002](docs/adr/0002-active-project-scope.md)).
-- IDE agents are connected to the window's project MCP server automatically: Claude Code (local scope) and Junie
-  (the folder's `.junie/mcp/mcp.json` and a project-local routing rule). AI Assistant: *Copy MCP Configuration for AI Assistant*.
+- IDE agents are connected to the project's MCP server automatically: Claude Code (local scope) and Junie
+  (`.junie/mcp/mcp.json` plus a project-local routing rule). The plugin creates and renews a short-lived project access
+  token from the existing platform session. AI Assistant: *Copy MCP Configuration for AI Assistant*.
 - Server-side edit locks: showing a file takes its lock, a banner explains when someone else holds it, and
   *Take over…* overrides it after confirmation.
 - Completion and checks for the folder's XML files from the platform's language server
@@ -49,8 +50,8 @@ workflow stays in Platform `MCP_SERVER_INSTRUCTIONS`.
 Junie must use its default Guidelines path. A custom Guidelines path bypasses project rules and cannot be detected
 through a stable public JetBrains API; clear that setting or include the same routing manually. An existing
 `.junie/AGENTS.md` is exclusive guidance, so the plugin connects MCP, warns about the conflict, and leaves the file
-unchanged. The credential-free routing rule remains when the project disconnects; only the token-bearing MCP entry
-is removed.
+unchanged. The token-bearing MCP entry is local, Git-ignored, and removed before its project token is revoked. The
+routing rule remains local for the next project open.
 
 ## Architecture
 

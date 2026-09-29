@@ -16,8 +16,8 @@ class Publication(
 class AgentConnection(
     /** Takes the project's workspace (files, locks, live updates) on the platform. */
     private val activate: (projectId: String) -> Unit,
-    /** Gives it back; the last window to leave also revokes the agents' token. */
-    private val deactivate: (projectId: String) -> Unit,
+    /** Gives it back; [beforeLastDeactivate] runs before the last window can revoke the agents' token. */
+    private val deactivate: (projectId: String, beforeLastDeactivate: () -> Unit) -> Unit,
     private val server: (projectId: String) -> McpServer,
     private val agents: () -> List<McpAgent>,
 ) {
@@ -25,6 +25,7 @@ class AgentConnection(
         private set
 
     private var registered = false
+    private var registeredAgents = emptyList<McpAgent>()
 
     /** Takes [projectId]'s workspace once, then points the agents at it; again later, e.g. with a renewed token. */
     @Synchronized
@@ -38,15 +39,18 @@ class AgentConnection(
     }
 
     private fun publish(projectId: String): Publication {
+        val availableAgents = agents()
+        if (availableAgents.isEmpty()) return Publication(null, emptyList(), emptyList())
         val current = try {
             server(projectId)
         } catch (e: Exception) {
-            // WHY: an older registration would keep pointing at a project whose token is about to be revoked.
-            unregisterAgents()
+            // WHY: replacement tokens are published before the old one is revoked, so a transient renewal failure must not cut off agents.
             return Publication(null, emptyList(), listOf("Project token: ${e.message ?: e.javaClass.simpleName}"))
         }
-        val outcomes = agents().associateWith { agent -> runCatching { agent.register(current) } }
-        registered = registered || outcomes.values.any { it.isSuccess }
+        val outcomes = availableAgents.associateWith { agent -> runCatching { agent.register(current) } }
+        val successful = outcomes.filterValues { it.isSuccess }.keys
+        registeredAgents = registeredAgents.filter { previous -> successful.none { it.displayName == previous.displayName } } + successful
+        registered = registeredAgents.isNotEmpty()
         return Publication(
             current,
             outcomes.filterValues { it.isSuccess }.keys.map(McpAgent::displayName),
@@ -59,15 +63,15 @@ class AgentConnection(
     @Synchronized
     fun unregisterAgents() {
         if (!registered) return
-        agents().forEach { runCatching { it.unregister() } }
+        registeredAgents.forEach { runCatching { it.unregister() } }
+        registeredAgents = emptyList()
         registered = false
     }
 
     /** Leaves the active project completely: agents first, then the workspace. */
     @Synchronized
     fun leave() {
-        unregisterAgents()
-        activeProjectId?.let(deactivate)
+        activeProjectId?.let { projectId -> deactivate(projectId, ::unregisterAgents) }
         activeProjectId = null
     }
 }

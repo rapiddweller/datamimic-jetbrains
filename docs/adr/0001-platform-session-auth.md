@@ -5,16 +5,9 @@
 
 ## Context
 
-The VS Code extension signs in with OAuth (Authorization Code + PKCE). The platform hands the result back through
-its HTTPS relay `/api/v2/oauth/native-callback/…`, which only accepts the `vscode`, `kiro` and `antigravity-ide`
-URI schemes (`oauth_routers.py:49`).
-
-A JetBrains IDE has no such scheme, and the standard native-app alternative, an RFC 8252 loopback redirect to
-`http://127.0.0.1:<port>`, does not work either. The consent page sends `Content-Security-Policy: form-action 'self'`
-and answers "Allow" with a 302 to the redirect URI. Chromium blocks that cross-origin redirect after the form post
-("violates … form-action 'self'"), which was reproduced with the same header and response.
-
-The platform must not be changed for the plugin.
+The VS Code extension signs in with OAuth. The JetBrains plugin already owns a direct Platform UI and does not need a
+browser round trip for its own session. Current Junie ACP does not surface a remote-MCP OAuth authorization action to
+the plugin, so Junie temporarily uses the same short-lived project access token as the other header-based agents.
 
 ## Decision
 
@@ -48,9 +41,11 @@ sequenceDiagram
   are different origins.
 - The plugin depends on the browser-session contract (cookie name, Origin rule). If the platform adds CSRF tokens,
   this breaks and must be revisited.
-- MCP needs bearer tokens and does not accept the session. The plugin obtains a project access token and registers
-  it with supported IDE agents; it does not give agents the browser session.
-- OAuth can replace this without changing the rest of the client if the platform ever relays loopback callbacks.
+- MCP needs bearer tokens and does not accept the session. Claude Code and the manual AI Assistant configuration get
+  a short-lived project access token; they never receive the browser session.
+- Junie's project configuration temporarily contains the same short-lived project access token as other header-based
+  agents. It is local-only, owner-readable where supported, and removed before revocation. Replace this path with
+  standard MCP OAuth when Junie exposes the authorization action through a stable public API.
 
 ## Verification
 

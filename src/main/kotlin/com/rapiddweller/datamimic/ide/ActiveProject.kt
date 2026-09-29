@@ -17,6 +17,8 @@ import com.intellij.openapi.project.ProjectCloseListener
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.util.EnvironmentUtil
 import com.rapiddweller.datamimic.core.mcp.AgentConnection
@@ -25,6 +27,7 @@ import com.rapiddweller.datamimic.core.mcp.GitIgnore
 import com.rapiddweller.datamimic.core.mcp.JunieAgent
 import com.rapiddweller.datamimic.core.mcp.McpAgent
 import com.rapiddweller.datamimic.core.mcp.Publication
+import com.rapiddweller.datamimic.core.mcp.McpServer
 import com.rapiddweller.datamimic.core.process.findOnPath
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.FolderClaimException
@@ -38,13 +41,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
+import kotlin.coroutines.coroutineContext
 
 /**
  * The platform project this IDE window is the local copy of, like the one open project in the platform UI. The
@@ -63,7 +67,7 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     private val connection = AgentConnection(
         activate = { platform.activate(it, checkNotNull(folder)) },
         deactivate = platform::deactivate,
-        server = platform::mcpServer,
+        server = { projectId -> platform.mcpServer(checkNotNull(identity).origin, projectId) },
         agents = ::agents,
     )
     private var renewal: Job? = null
@@ -103,24 +107,35 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     /** Before signing out: disconnects the agents and gives locks and their token back while the session still exists. */
     suspend fun disconnectForSignOut() {
         renewal?.cancel()
-        withContext(Dispatchers.IO) { connection.leave() }
+        withContext(Dispatchers.IO) {
+            connection.leave()
+        }
     }
 
     /** UI thread, while the window closes: agents must not keep a live token for a window that is gone. */
     internal fun leaveOnClose() {
         renewal?.cancel()
-        if (connection.activeProjectId == null) return
         runWithModalProgressBlocking(project, "Disconnecting DATAMIMIC agents") {
-            withTimeoutOrNull(CLOSE_TIMEOUT_MS) { withContext(Dispatchers.IO) { connection.leave() } }
+            withTimeoutOrNull(CLOSE_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
+                    connection.leave()
+                }
+            }
         }
     }
 
     private suspend fun connect(target: FolderIdentity) {
-        renewal?.cancel()
+        if (renewal != coroutineContext[Job]) renewal?.cancel()
         val publication = withContext(Dispatchers.IO) { connection.connect(target.projectId) }
         session()?.let(::watch)
         report(target, publication)
-        val server = publication.server ?: return
+        val server = publication.server ?: run {
+            renewal = scope.launch {
+                delay(RENEWAL_RETRY_MS)
+                if (connection.activeProjectId == target.projectId) connect(target)
+            }
+            return
+        }
         renewal = scope.launch {
             delay(Duration.between(Instant.now(), platform.mcpRenewalDue(server)).toMillis().coerceAtLeast(0))
             if (connection.activeProjectId == target.projectId) connect(target)
@@ -224,7 +239,13 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     /** IDE agents of this window that can be connected automatically. */
     private fun agents(): List<McpAgent> {
         val projectDir = folder?.root ?: return emptyList()
-        return discoverAgents(projectDir, EnvironmentUtil.getValue("PATH"), Path.of(System.getProperty("user.home")))
+        val target = identity ?: return emptyList()
+        return discoverSessionAgents(projectDir, EnvironmentUtil.getValue("PATH")) +
+            JunieAgent(
+                projectDir,
+                GitIgnore(projectDir, findOnPath("git", EnvironmentUtil.getValue("PATH"))),
+                filesChanged = { refreshJunieFiles(projectDir) },
+            )
     }
 
     private fun group() = NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
@@ -233,12 +254,14 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
 
     /** Only reached without [leaveOnClose], e.g. when the plugin is unloaded: best effort on the app scope. */
     override fun dispose() {
-        if (connection.activeProjectId == null) return
-        platform.scope.launch(Dispatchers.IO) { connection.leave() }
+        platform.scope.launch(Dispatchers.IO) {
+            connection.leave()
+        }
     }
 
     private companion object {
         const val CLOSE_TIMEOUT_MS = 10_000L
+        const val RENEWAL_RETRY_MS = 60_000L
         const val MISSING_LISTED = 10
     }
 }
@@ -246,12 +269,34 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
 internal fun Project.activeProject(): ActiveProject = getService(ActiveProject::class.java)
 
 /** Discovers agents from the actual user environment; callers provide paths so startup behavior is testable. */
-internal fun discoverAgents(projectDir: Path, path: String?, userHome: Path): List<McpAgent> = buildList {
+internal fun discoverSessionAgents(projectDir: Path, path: String?): List<McpAgent> = buildList {
     findOnPath("claude", path)?.let { add(ClaudeCodeAgent(it, projectDir)) }
-    // WHY: Junie keeps its state in ~/.junie; without it Junie is not in use and gets no token on disk.
-    if (Files.isDirectory(userHome.resolve(".junie"))) {
-        add(JunieAgent(projectDir, GitIgnore(projectDir, findOnPath("git", path))))
+}
+
+internal fun registerJunieProject(projectDir: Path, path: String?, server: McpServer): List<String> =
+    JunieAgent(
+        projectDir,
+        GitIgnore(projectDir, findOnPath("git", path)),
+    ).register(server)
+
+internal fun unregisterJunieProject(projectDir: Path, path: String?, server: McpServer) {
+    // WHY: cleanup must not overwrite a malformed, tracked, or user-owned configuration.
+    runCatching {
+        JunieAgent(
+            projectDir,
+            GitIgnore(projectDir, findOnPath("git", path)),
+            managedServer = server,
+            filesChanged = { refreshJunieFiles(projectDir) },
+        ).unregister()
     }
+}
+
+internal fun refreshJunieFiles(projectDir: Path) {
+    val fileSystem = LocalFileSystem.getInstance()
+    val known = listOf(JunieAgent.CONFIG_PATH, JunieAgent.ROUTING_RULE_PATH).mapNotNull { relativePath ->
+        generateSequence(projectDir.resolve(relativePath)) { it.parent }.firstNotNullOfOrNull(fileSystem::findFileByNioFile)
+    }.distinct()
+    VfsUtil.markDirtyAndRefresh(false, true, true, *known.toTypedArray())
 }
 
 /** Every connected IDE window, so signing out can disconnect them while the session still exists. */
@@ -264,7 +309,35 @@ internal suspend fun disconnectAllWindowsForSignOut() {
 class ActiveProjectStartup : ProjectActivity {
     override suspend fun execute(project: Project) {
         val base = project.basePath ?: return
-        val identity = ProjectFolder(Path.of(base)).identity() ?: return
+        val root = Path.of(base)
+        val identity = ProjectFolder(root).identity() ?: return
+        val platform = DatamimicPlatform.getInstance()
+        val warnings = try {
+            when (val auth = platform.state.first { it != AuthState.Unknown }) {
+                is AuthState.SignedIn -> if (auth.origin == identity.origin) {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val server = platform.mcpServer(identity.origin, identity.projectId)
+                            registerJunieProject(root, EnvironmentUtil.getValue("PATH"), server)
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        listOf("Junie MCP: ${e.message ?: e.javaClass.simpleName}")
+                    }
+                } else {
+                    emptyList()
+                }
+                else -> emptyList()
+            }
+        } finally {
+            refreshJunieFiles(root)
+        }
+        if (warnings.isNotEmpty()) {
+            NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
+                .createNotification("Junie setup incomplete", warnings.joinToString("\n"), NotificationType.WARNING)
+                .notify(project)
+        }
         project.activeProject()
         ensureNativeRunConfiguration(project, identity)
     }

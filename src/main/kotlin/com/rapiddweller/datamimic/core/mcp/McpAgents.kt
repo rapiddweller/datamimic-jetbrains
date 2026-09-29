@@ -10,8 +10,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -51,36 +53,57 @@ class ClaudeCodeAgent(private val cli: Path, private val projectDir: Path) : Mcp
 }
 
 /**
- * Junie, through the project's `.junie/mcp/mcp.json`: the project-level file scopes the server to this IDE window.
- * The plugin also owns one routing rule; neither it nor the MCP entry replaces user guidance.
+ * Junie, through the project's `.junie/mcp/mcp.json`. Junie's IDE ACP integration does not yet surface a remote MCP
+ * OAuth challenge, so this temporary integration publishes the same short-lived project token as other IDE agents.
  */
-class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : McpAgent {
+class JunieAgent(
+    private val projectDir: Path,
+    private val git: GitIgnore,
+    private var managedServer: McpServer? = null,
+    private val filesChanged: () -> Unit = {},
+) : McpAgent {
     override val displayName = "Junie"
-
     private val configFile: Path = projectDir.resolve(CONFIG_PATH)
     private val routingRuleFile: Path = projectDir.resolve(ROUTING_RULE_PATH)
 
     override fun register(server: McpServer): List<String> {
         if (mcpPathHasSymbolicLink()) {
-            throw McpAgentException("Junie: $CONFIG_PATH or its parent is a symbolic link, so the DATAMIMIC token is not written.")
+            throw McpAgentException("Junie: $CONFIG_PATH or its parent is a symbolic link, so the DATAMIMIC configuration is not written.")
         }
         if (git.isTracked(CONFIG_PATH)) {
-            throw McpAgentException("Junie: $CONFIG_PATH is tracked by Git, so the DATAMIMIC token is not written into it.")
+            throw McpAgentException("Junie: $CONFIG_PATH is tracked by Git, so the plugin leaves it unchanged.")
         }
         val currentServers = readServers()
-        val warning = publishRoutingRule()
-        excludeFromGit(CONFIG_PATH)
         val entry = buildJsonObject {
             put("url", server.url)
-            putJsonObject("headers") { server.headers.forEach { (name, value) -> put(name, value) } }
+            putJsonObject("headers") {
+                server.headers.forEach { (name, value) -> put(name, value) }
+                put(MANAGED_HEADER, MANAGED_BY)
+            }
         }
+        currentServers[MCP_SERVER_NAME]?.let { current ->
+            if (!isPluginManagedEntry(current, server.url) && !isLegacyUrlEntry(current, server.url)) {
+                throw McpAgentException("Junie: $MCP_SERVER_NAME already exists and is not managed by this plugin.")
+            }
+        }
+        val warning = publishRoutingRule()
+        excludeFromGit(CONFIG_PATH)
+        excludeFromGit(CONFIG_TEMP_DIR)
         writeServers(currentServers + (MCP_SERVER_NAME to entry))
+        managedServer = server
+        filesChanged()
         return listOfNotNull(warning)
     }
 
+    /** Removes only the token-bearing entry this plugin owns; user-owned or malformed configuration is untouched. */
     override fun unregister() {
-        if (mcpPathHasSymbolicLink()) return
-        if (configFile.exists()) writeServers(readServers() - MCP_SERVER_NAME)
+        if (mcpPathHasSymbolicLink() || git.isTracked(CONFIG_PATH)) return
+        val server = managedServer ?: return
+        val currentServers = runCatching(::readServers).getOrNull() ?: return
+        val current = currentServers[MCP_SERVER_NAME] ?: return
+        if (!isExactManagedEntry(current, server)) return
+        writeServers(currentServers - MCP_SERVER_NAME)
+        filesChanged()
     }
 
     private fun readConfig(): JsonObject =
@@ -94,7 +117,7 @@ class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : Mcp
             Files.deleteIfExists(configFile)
             return
         }
-        writeSecretFile(configFile, JsonObject(others + (SERVERS_KEY to JsonObject(servers))).toString())
+        writeSecretFile(configFile, JsonObject(others + (SERVERS_KEY to JsonObject(servers))).toString(), projectDir.resolve(CONFIG_TEMP_DIR))
     }
 
     private fun excludeFromGit(relativePath: String) {
@@ -133,13 +156,35 @@ class JunieAgent(private val projectDir: Path, private val git: GitIgnore) : Mcp
         listOf(".junie", ".junie/rules", ROUTING_RULE_PATH).any { Files.isSymbolicLink(projectDir.resolve(it)) }
 
     private fun mcpPathHasSymbolicLink(): Boolean =
-        listOf(".junie", ".junie/mcp", CONFIG_PATH).any { Files.isSymbolicLink(projectDir.resolve(it)) }
+        listOf(".junie", ".junie/mcp", CONFIG_TEMP_DIR, CONFIG_PATH).any { Files.isSymbolicLink(projectDir.resolve(it)) }
 
-    private companion object {
+    private fun isPluginManagedEntry(entry: JsonElement, expectedUrl: String): Boolean = runCatching {
+        val objectEntry = entry.jsonObject
+        objectEntry["url"]?.jsonPrimitive?.content == expectedUrl &&
+            objectEntry["headers"]?.jsonObject?.get("Authorization")?.jsonPrimitive?.content?.startsWith("Bearer ") == true &&
+            objectEntry["headers"]?.jsonObject?.get(MANAGED_HEADER)?.jsonPrimitive?.content == MANAGED_BY
+    }.getOrDefault(false)
+
+    private fun isExactManagedEntry(entry: JsonElement, server: McpServer): Boolean = runCatching {
+        val objectEntry = entry.jsonObject
+        val headers = objectEntry["headers"]?.jsonObject ?: return@runCatching false
+        isPluginManagedEntry(entry, server.url) &&
+            headers.filterKeys { it != MANAGED_HEADER }.mapValues { (_, value) -> value.jsonPrimitive.content } == server.headers
+    }.getOrDefault(false)
+
+    private fun isLegacyUrlEntry(entry: JsonElement, expectedUrl: String): Boolean = runCatching {
+        val objectEntry = entry.jsonObject
+        objectEntry.size == 1 && objectEntry["url"]?.jsonPrimitive?.content == expectedUrl
+    }.getOrDefault(false)
+
+    internal companion object {
         const val CONFIG_PATH = ".junie/mcp/mcp.json"
         const val EXCLUSIVE_GUIDANCE_PATH = ".junie/AGENTS.md"
         const val ROUTING_RULE_PATH = ".junie/rules/datamimic.md"
+        const val CONFIG_TEMP_DIR = ".junie/mcp/.datamimic-tmp"
         const val SERVERS_KEY = "mcpServers"
+        const val MANAGED_HEADER = "X-DATAMIMIC-Managed-By"
+        const val MANAGED_BY = "datamimic-jetbrains"
         val PREVIOUS_ROUTING_RULE = """
             # DATAMIMIC Platform routing
 
@@ -211,13 +256,20 @@ class GitIgnore(private val projectDir: Path, private val git: Path?) {
 }
 
 /** Writes atomically and, where the file system allows it, readable only by the owner. */
-internal fun writeSecretFile(target: Path, content: String) {
+internal fun writeSecretFile(target: Path, content: String) = writeSecretFile(target, content, target.parent)
+
+internal fun writeSecretFile(target: Path, content: String, tempDirectory: Path) {
     Files.createDirectories(target.parent)
-    val temp = Files.createTempFile(target.parent, ".${target.fileName}", ".tmp")
+    Files.createDirectories(tempDirectory)
+    val temp = Files.createTempFile(tempDirectory, ".${target.fileName}", ".tmp")
     try {
         runCatching { Files.setPosixFilePermissions(temp, PosixFilePermissions.fromString("rw-------")) }
         Files.writeString(temp, content)
-        Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        try {
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING)
+        }
     } finally {
         Files.deleteIfExists(temp)
     }
