@@ -20,6 +20,7 @@ import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
@@ -27,6 +28,8 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBFont
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import com.rapiddweller.datamimic.core.DOWNLOAD_TIMEOUT
 import com.rapiddweller.datamimic.core.PlatformSessionFence
 import com.rapiddweller.datamimic.core.generation.GenerationRun
@@ -56,9 +59,12 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.GridLayout
 import java.awt.Point
+import java.awt.datatransfer.StringSelection
 import java.awt.event.HierarchyEvent
 import java.io.IOException
 import java.nio.file.Files
@@ -66,15 +72,19 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JComboBox
 import javax.swing.JList
 import javax.swing.JLabel
+import javax.swing.ListCellRenderer
 import javax.swing.JPanel
 import javax.swing.JSplitPane
+import javax.swing.ScrollPaneConstants
 import javax.swing.SwingUtilities
+import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListModel
 import javax.swing.table.DefaultTableModel
 
-internal const val GENERATION_TOOL_WINDOW_ID = "DATAMIMIC Generation"
+internal const val GENERATION_TOOL_WINDOW_ID = "Generation Tasks"
 
 internal fun updateOutput(scroll: JBScrollPane, area: JBTextArea, value: String) {
     if (area.text == value) return
@@ -154,10 +164,45 @@ class GenerationTasksToolWindowFactory : ToolWindowFactory, DumbAware {
 
 private data class GenerationBinding(val identity: FolderIdentity, val auth: AuthState.SignedIn)
 
+private class GenerationTaskRenderer : JPanel(GridLayout(2, 1)), ListCellRenderer<GenerationTask> {
+    private val primary = JLabel()
+    private val secondary = JLabel()
+
+    init {
+        border = JBUI.Borders.empty(4, 6)
+        add(primary)
+        add(secondary)
+    }
+
+    override fun getListCellRendererComponent(
+        list: JList<out GenerationTask>,
+        value: GenerationTask,
+        index: Int,
+        isSelected: Boolean,
+        cellHasFocus: Boolean,
+    ): Component {
+        primary.text = listOfNotNull(value.status?.name, value.name).joinToString(" · ")
+        primary.icon = when (value.status) {
+            TaskStatus.SUCCESS -> AllIcons.RunConfigurations.TestPassed
+            TaskStatus.SUCCESS_WITH_WARNING -> AllIcons.General.Warning
+            TaskStatus.WORKER_FAILURE, TaskStatus.DISPATCH_FAILURE, TaskStatus.FINALIZATION_FAILURE -> AllIcons.RunConfigurations.TestFailed
+            TaskStatus.CANCELLED, TaskStatus.DELETED -> AllIcons.RunConfigurations.TestTerminated
+            else -> AllIcons.RunConfigurations.TestNotRan
+        }
+        secondary.text = listOfNotNull(value.queuedAt, value.taskId.take(8)).joinToString(" · ")
+        toolTipText = value.taskId
+        background = if (isSelected) list.selectionBackground else list.background
+        primary.foreground = if (isSelected) list.selectionForeground else list.foreground
+        secondary.foreground = if (isSelected) list.selectionForeground else UIUtil.getContextHelpForeground()
+        isOpaque = true
+        return this
+    }
+}
+
 private class GenerationTasksView(private val project: Project, parentScope: CoroutineScope) : JPanel(BorderLayout()), Disposable {
     private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext.job))
     private val tasks = DefaultListModel<GenerationTask>()
-    private val list = JList(tasks)
+    private val list = JList(tasks).apply { cellRenderer = GenerationTaskRenderer() }
     private val taskState = JLabel("No task selected.")
     private val previous = JButton("Previous")
     private val next = JButton("Next")
@@ -183,7 +228,7 @@ private class GenerationTasksView(private val project: Project, parentScope: Cor
         }
         val taskList = JPanel(BorderLayout()).apply {
             add(taskState, BorderLayout.NORTH)
-            add(JBScrollPane(list), BorderLayout.CENTER)
+            add(JBScrollPane(list).apply { horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER }, BorderLayout.CENTER)
             add(controls, BorderLayout.SOUTH)
         }
         details.add(JLabel("Select a task."), BorderLayout.CENTER)
@@ -381,17 +426,31 @@ internal class RunResultView(
     private val artifactProject: Project? = null,
 ) : JPanel(BorderLayout()), Disposable {
     private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext.job))
-    private val task = JLabel("Task ID: ${run.taskId}")
+    private val task = JLabel("Task ${run.taskId.take(8)}").apply { toolTipText = run.taskId }
     private val state = JLabel("Status: observing · Elapsed: 0s")
-    private val stop = JButton("Stop Server Run")
-    private val retry = JButton("Retry")
-    private val close = JButton("Close View")
+    private val copyTask = JButton(AllIcons.Actions.Copy).apply { toolTipText = "Copy task ID" }
+    private val stop = JButton("Stop", AllIcons.Actions.Cancel)
+    private val retry = JButton("Retry", AllIcons.Actions.Refresh)
+    private val close = JButton("Close", AllIcons.Actions.Close)
     private val tabs = JBTabbedPane()
     private val log = output()
     private val errorOutput = output()
     private val logScroll = JBScrollPane(log)
     private val errorScroll = JBScrollPane(errorOutput)
-    private val previewTabs = mutableSetOf<String>()
+    private val previewSelector = JComboBox<String>().apply {
+        isVisible = false
+        maximumRowCount = 10
+    }
+    private val previewContent = JPanel(BorderLayout()).apply {
+        add(text("Preview available after the task finishes."), BorderLayout.CENTER)
+    }
+    private val preview = JPanel(BorderLayout()).apply {
+        add(previewSelector, BorderLayout.NORTH)
+        add(previewContent, BorderLayout.CENTER)
+    }
+    private var previewNames = emptyList<String>()
+    private var previewsByName = emptyMap<String, PreviewContent>()
+    private var previewsRendered = false
     private var artifactBrowser: ArtifactBrowser? = null
     private var observation: Job? = null
     private var actionError: Throwable? = null
@@ -402,19 +461,30 @@ internal class RunResultView(
     private var active = true
 
     init {
-        val header = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+        val identity = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
             add(JLabel("$projectName generation"))
             add(task)
+            add(copyTask)
             add(state)
+        }
+        val actions = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 2)).apply {
             add(stop)
             add(retry)
             add(close)
         }
+        val header = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(2)
+            add(identity, BorderLayout.CENTER)
+            add(actions, BorderLayout.EAST)
+        }
         add(header, BorderLayout.NORTH)
         tabs.addTab("Log", AllIcons.Nodes.Console, logScroll)
         tabs.addTab("Errors", AllIcons.General.Error, errorScroll)
+        tabs.addTab("Preview", AllIcons.Actions.Preview, preview)
         tabs.addChangeListener { if (tabs.selectedComponent === artifactBrowser) artifactBrowser?.load() }
         add(tabs, BorderLayout.CENTER)
+        copyTask.addActionListener { CopyPasteManager.getInstance().setContents(StringSelection(run.taskId)) }
+        previewSelector.addActionListener { renderPreview(previewSelector.selectedItem as? String) }
         stop.addActionListener { stopServerRun() }
         retry.addActionListener {
             actionError = null
@@ -470,11 +540,7 @@ internal class RunResultView(
         retry.isEnabled = !stopping
         updateOutput(logScroll, log, snapshot.log.ifBlank { "No log output." })
         updateOutput(errorScroll, errorOutput, errors(snapshot).ifBlank { "No errors." })
-        snapshot.previews.filter { previewTabs.add(it.name) }
-            .forEach { tabs.addTab("Preview sample: ${it.name}", AllIcons.Actions.Preview, component(it)) }
-        if (snapshot.previewsLoaded && snapshot.previews.isEmpty() && previewTabs.add("Preview unavailable")) {
-            tabs.addTab("Preview sample", AllIcons.Actions.Preview, text("Preview unavailable."))
-        }
+        renderPreviews(snapshot.previews, snapshot.previewsLoaded)
         if (snapshot.status?.succeeded == true && artifactBrowser == null && artifactProject != null) {
             ArtifactBrowser(artifactProject, run, scope, current).also {
                 artifactBrowser = it
@@ -509,6 +575,29 @@ internal class RunResultView(
         snapshot.previewError?.let { "Preview refresh failed: ${it.message ?: it.javaClass.simpleName}" },
         actionError?.let { "Stop Server Run failed: ${it.message ?: it.javaClass.simpleName}" },
     ).joinToString("\n\n")
+
+    private fun renderPreviews(previews: List<PreviewContent>, loaded: Boolean) {
+        if (!loaded) return
+        val unique = previews.distinctBy(PreviewContent::name)
+        val names = unique.map(PreviewContent::name)
+        if (previewsRendered && names == previewNames) return
+        val selected = previewSelector.selectedItem as? String
+        previewsRendered = true
+        previewNames = names
+        previewsByName = unique.associateBy(PreviewContent::name)
+        previewSelector.model = DefaultComboBoxModel(names.toTypedArray())
+        previewSelector.isVisible = names.size > 1
+        val target = selected?.takeIf(previewsByName::containsKey) ?: names.firstOrNull()
+        if (target != null) previewSelector.selectedItem = target
+        renderPreview(target)
+    }
+
+    private fun renderPreview(name: String?) {
+        previewContent.removeAll()
+        previewContent.add(name?.let(previewsByName::get)?.let(::component) ?: text("Preview unavailable."), BorderLayout.CENTER)
+        previewContent.revalidate()
+        previewContent.repaint()
+    }
 
     override fun dispose() {
         run.close()

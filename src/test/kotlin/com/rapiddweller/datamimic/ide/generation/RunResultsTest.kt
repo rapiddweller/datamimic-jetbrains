@@ -29,6 +29,7 @@ import java.net.http.HttpClient
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.swing.JComboBox
 
 class RunResultsTest : BasePlatformTestCase() {
     fun `test artifact publication holds the unsaved check in the IDE write action`() {
@@ -117,13 +118,15 @@ class RunResultsTest : BasePlatformTestCase() {
             val previewReady = AtomicBoolean()
             PlatformTestUtil.waitWithEventsDispatching("empty preview was not rendered unavailable", {
                 runInEdtAndWait {
-                    previewReady.set((tabbedPane(checkNotNull(console))?.indexOfTab("Preview sample") ?: -1) >= 0)
+                    val tabs = tabbedPane(checkNotNull(console))
+                    val index = tabs?.indexOfTab("Preview") ?: -1
+                    previewReady.set(index >= 0 && textArea(checkNotNull(tabs).getComponentAt(index))?.text == "Preview unavailable.")
                 }
                 previewReady.get()
             }, 5)
             runInEdtAndWait {
                 val preview = checkNotNull(tabbedPane(checkNotNull(console)))
-                val previewComponent = preview.getComponentAt(preview.indexOfTab("Preview sample"))
+                val previewComponent = preview.getComponentAt(preview.indexOfTab("Preview"))
                 assertTrue(textArea(previewComponent)?.text == "Preview unavailable.")
                 assertTrue(preview.indexOfTab("Artifacts") < 0)
             }
@@ -162,8 +165,43 @@ class RunResultsTest : BasePlatformTestCase() {
                 val tabs = checkNotNull(tabbedPane(checkNotNull(view)))
                 assertSame(AllIcons.Nodes.Console, tabs.getIconAt(tabs.indexOfTab("Log")))
                 assertSame(AllIcons.General.Error, tabs.getIconAt(tabs.indexOfTab("Errors")))
-                assertSame(AllIcons.Actions.Preview, tabs.getIconAt(tabs.indexOfTab("Preview sample")))
+                assertSame(AllIcons.Actions.Preview, tabs.getIconAt(tabs.indexOfTab("Preview")))
                 assertSame(AllIcons.Nodes.Artifact, tabs.getIconAt(tabs.indexOfTab("Artifacts")))
+            }
+        } finally {
+            view?.let { runInEdtAndWait(it::dispose) }
+            scope.cancel()
+            client.shutdownNow()
+            platform.close()
+        }
+    }
+
+    fun `test multiple preview samples share one selectable tab`() {
+        val platform = FakePlatform()
+        val client = HttpClient.newHttpClient()
+        val scope = CoroutineScope(SupervisorJob())
+        var view: RunResultView? = null
+        try {
+            platform.generationStatus = "SUCCESS"
+            platform.generationPreview =
+                """{"preview":[{"extension":"json","name":"customers","code":[{"id":"1"}]},{"extension":"json","name":"orders","code":[{"id":"2"}]}]}"""
+            val sessions = SessionService(client, { null }, {})
+            sessions.login(platform.origin, "ada@example.com", "secret")
+            val run = GenerationRun(GenerationApi(PlatformHttp(client, sessions, "binding")), "p1", "generation-1")
+            runInEdtAndWait {
+                view = RunResultView("Payments", run, scope, null, {}, {}).also { it.start() }
+            }
+
+            val ready = AtomicBoolean()
+            PlatformTestUtil.waitWithEventsDispatching("preview selector was not rendered", {
+                runInEdtAndWait { ready.set(comboBox(checkNotNull(view))?.itemCount == 2) }
+                ready.get()
+            }, 5)
+
+            runInEdtAndWait {
+                val tabs = checkNotNull(tabbedPane(checkNotNull(view)))
+                assertEquals(1, (0 until tabs.tabCount).count { tabs.getTitleAt(it) == "Preview" })
+                assertEquals(listOf("customers", "orders"), (0 until 2).map { checkNotNull(comboBox(checkNotNull(view))).getItemAt(it) })
             }
         } finally {
             view?.let { runInEdtAndWait(it::dispose) }
@@ -184,6 +222,12 @@ class RunResultsTest : BasePlatformTestCase() {
     private fun textArea(component: Component): JBTextArea? = when (component) {
         is JBTextArea -> component
         is Container -> component.components.firstNotNullOfOrNull(::textArea)
+        else -> null
+    }
+
+    private fun comboBox(component: Component): JComboBox<*>? = when (component) {
+        is JComboBox<*> -> component
+        is Container -> component.components.firstNotNullOfOrNull(::comboBox)
         else -> null
     }
 }
