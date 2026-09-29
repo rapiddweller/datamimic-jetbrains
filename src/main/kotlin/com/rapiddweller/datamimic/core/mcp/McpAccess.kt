@@ -88,7 +88,7 @@ class McpAccess(
     fun server(origin: PlatformOrigin, projectId: String): McpServer {
         val token = usableToken(tokens.boundTo(origin), projectId, tokenName(origin, projectId))
         return McpServer(
-            url = mcpServerUrl(origin, projectId),
+            url = "${origin.value}/api/v2/mcp/projects/${encode(projectId)}",
             headers = mapOf(
                 PlatformHeader.AUTHORIZATION.wireName to "Bearer ${token.secret}",
                 // WHY: without a stable binding every MCP request would count as a new client and lose its file locks.
@@ -142,9 +142,6 @@ class McpAccess(
         val MIN_REMAINING: Duration = Duration.ofHours(4)
     }
 }
-
-internal fun mcpServerUrl(origin: PlatformOrigin, projectId: String) =
-    "${origin.value}/api/v2/mcp/projects/${encode(projectId)}"
 
 /** An IDE agent that can be pointed at the active project's MCP server. */
 interface McpAgent {

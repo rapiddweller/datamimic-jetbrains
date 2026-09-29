@@ -248,7 +248,7 @@ class ProjectSyncTest {
     }
 
     @Test
-    fun `Junie output is never synced, but other hidden paths are`() {
+    fun `agent output is never synced, but other hidden paths are`() {
         syncNow()
         write(".output.json", "created")
         assertNull(folder.pathOf(file(".output.json")))
@@ -269,6 +269,14 @@ class ProjectSyncTest {
         assertTrue(platform.creates.isEmpty())
         assertTrue(platform.deletes.isEmpty())
         assertTrue(session.saver.unconfirmedPaths().isEmpty())
+
+        write(".ai/mcp/mcp.json", "token")
+        session.sync.localChanged(".ai/mcp/mcp.json")
+        syncNow()
+        awaitUploads()
+
+        assertEquals(0, platform.uploadsReceived)
+        assertTrue(platform.creates.isEmpty())
 
         write(".project/config.xml", "<config/>")
         syncNow()

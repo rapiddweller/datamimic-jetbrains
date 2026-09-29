@@ -24,7 +24,6 @@ class AgentConnection(
     var activeProjectId: String? = null
         private set
 
-    private var registered = false
     private var registeredAgents = emptyList<McpAgent>()
 
     /** Takes [projectId]'s workspace once, then points the agents at it; again later, e.g. with a renewed token. */
@@ -40,6 +39,9 @@ class AgentConnection(
 
     private fun publish(projectId: String): Publication {
         val availableAgents = agents()
+        val removedAgents = registeredAgents.filter { registered -> availableAgents.none { it.displayName == registered.displayName } }
+        removedAgents.forEach { runCatching { it.unregister() } }
+        registeredAgents = registeredAgents - removedAgents.toSet()
         if (availableAgents.isEmpty()) return Publication(null, emptyList(), emptyList())
         val current = try {
             server(projectId)
@@ -50,7 +52,6 @@ class AgentConnection(
         val outcomes = availableAgents.associateWith { agent -> runCatching { agent.register(current) } }
         val successful = outcomes.filterValues { it.isSuccess }.keys
         registeredAgents = registeredAgents.filter { previous -> successful.none { it.displayName == previous.displayName } } + successful
-        registered = registeredAgents.isNotEmpty()
         return Publication(
             current,
             outcomes.filterValues { it.isSuccess }.keys.map(McpAgent::displayName),
@@ -62,10 +63,10 @@ class AgentConnection(
     /** Disconnects the agents but keeps the workspace, e.g. while the session is expired. */
     @Synchronized
     fun unregisterAgents() {
-        if (!registered) return
-        registeredAgents.forEach { runCatching { it.unregister() } }
+        if (registeredAgents.isEmpty()) return
+        // WHY: unwind registrations so fast local credential files disappear before slower external CLIs run.
+        registeredAgents.asReversed().forEach { runCatching { it.unregister() } }
         registeredAgents = emptyList()
-        registered = false
     }
 
     /** Leaves the active project completely: agents first, then the workspace. */

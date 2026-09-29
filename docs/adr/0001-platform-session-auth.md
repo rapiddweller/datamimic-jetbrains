@@ -41,8 +41,9 @@ sequenceDiagram
   are different origins.
 - The plugin depends on the browser-session contract (cookie name, Origin rule). If the platform adds CSRF tokens,
   this breaks and must be revisited.
-- MCP needs bearer tokens and does not accept the session. Claude Code and the manual AI Assistant configuration get
-  a short-lived project access token; they never receive the browser session.
+- MCP needs bearer tokens and does not accept the session. Claude Code, Junie, and the optional AI Assistant project
+  configuration get a short-lived project access token; they never receive the browser session. AI Assistant must
+  enable **Automatically enable new and changed MCP servers** and **Pass custom MCP servers** before a chat uses it.
 - Junie's project configuration temporarily contains the same short-lived project access token as other header-based
   agents. It is local-only, owner-readable where supported, and removed before revocation. Replace this path with
   standard MCP OAuth when Junie exposes the authorization action through a stable public API.

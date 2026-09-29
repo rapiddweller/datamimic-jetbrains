@@ -37,10 +37,14 @@ flowchart LR
   - **Claude Code:** `claude mcp add --scope local` in the project directory. The token stays in the user's Claude
     configuration, not in the repository.
   - **Junie:** before the first IDE open, write the project URL and token headers as the `datamimic-platform` entry
-    in `.junie/mcp/mcp.json`, plus `.junie/rules/datamimic.md`. Both files stay out of Git; the configuration is
-    owner-readable where supported, and tracked configuration and existing guidance are left unchanged.
-  - **AI Assistant:** no documented API or file exists, so *Copy MCP Configuration for AI Assistant* hands over the
-    entry for *Add → As JSON*. It is not removed automatically.
+    in `.junie/mcp/mcp.json`. In a project without user guidance, publish the routing as `.junie/AGENTS.md` for the
+    supported Junie runtime. With combined root, playbook, or rule guidance, publish `.junie/rules/datamimic.md` instead.
+    Exclusive and legacy user guidance is left unchanged and requires manual inclusion. The guidance combines
+    Junie-only routing and generation limits with the generic workflow projected from Platform
+    `MCP_SERVER_INSTRUCTIONS`; the packaged projection is checked with `scripts/sync-agent-guidance.sh`.
+  - **AI Assistant:** the default-off project setting writes the managed entry to `.ai/mcp/mcp.json`, removes only
+    that exact entry on disable or disconnect, and leaves **Automatically enable new and changed MCP servers** and
+    **Pass custom MCP servers** to the user.
 - Closing the window or signing out removes token-based registrations, including Junie's managed token entry, before
   revocation. The routing rule remains local. An expired plugin session removes token-based registrations; local edits
   stay in the folder and upload after signing in again. Closing a window disconnects synchronously (at most 10 s).
@@ -52,7 +56,27 @@ flowchart LR
   less than four hours left when the replacement is published, so ongoing sessions are not cut off by renewal.
 - While `claude mcp add` runs, the token is visible in the process list to other users of the same machine.
 - A crashed IDE leaves registrations behind; their token expires within 24 hours and the next activation overwrites them.
-- AI Assistant's entry is never removed automatically and has to be pasted again after a renewal. Junie's current ACP
-  integration does not surface a stable public hook for remote-MCP OAuth authorization, so it uses the same temporary
-  project-token lifecycle as Claude Code.
+- AI Assistant requires **Automatically enable new and changed MCP servers** and **Pass custom MCP servers** before a
+  chat uses the published MCP.
+  Junie's current ACP integration does not surface a stable public hook for remote-MCP OAuth authorization, so it uses
+  the same temporary project-token lifecycle as Claude Code.
 - Unverified: whether Claude Code applies the local scope when started from a subdirectory of the project.
+
+## Exceptions / Deviations
+
+- `.junie/mcp/mcp.json`, `.junie/AGENTS.md`, and `.junie/rules/datamimic.md` are Junie host integration files, not stable
+  JetBrains plugin APIs. Recheck them against a real supported Junie version before every release that changes agent
+  setup.
+- The generic workflow is a generated delivery projection, not a second policy owner. Platform
+  `MCP_SERVER_INSTRUCTIONS` remains authoritative. Its `datamimic_build_model` step is the bounded authoring dry run;
+  it never persists XML or starts data generation.
+
+## Verification
+
+- `McpTest`: Junie and AI Assistant configuration ownership, token replacement and removal, routing publication,
+  migration of older plugin rules, symlink/tracked-file safety, and the canonical build/dry-run/commit instructions.
+- `AgentConnectionTest`: renewal and last-window cleanup ordering.
+- `AgentDiscoveryTest`, `AgentVfsTest`, and `AiAssistantSettingsTest`: pre-open publication, IDE file refresh, and the
+  default-off project setting.
+- Manual release check: open a fresh DATAMIMIC project and start new Junie and AI Assistant chats; existing chats may
+  cache earlier MCP and guidance state.

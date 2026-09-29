@@ -5,6 +5,7 @@
 package com.rapiddweller.datamimic.ide
 
 import com.rapiddweller.datamimic.core.json
+import com.rapiddweller.datamimic.core.mcp.JunieAgent
 import com.rapiddweller.datamimic.core.mcp.McpServer
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -37,8 +38,11 @@ class AgentDiscoveryTest {
             .jsonObject.getValue("mcpServers").jsonObject.getValue("datamimic-platform").jsonObject
         assertEquals("https://dm.example/api/v2/mcp/projects/project-1", entry.getValue("url").jsonPrimitive.content)
         assertEquals("Bearer token", entry.getValue("headers").jsonObject.getValue("Authorization").jsonPrimitive.content)
-        val rule = Files.readString(projectDir.resolve(".junie/rules/datamimic.md"))
-        assertTrue(rule.contains("only the available `datamimic_*` MCP tools"))
-        assertTrue(rule.contains("Never start data generation"))
+        val guidance = Files.readString(projectDir.resolve(JunieAgent.EXCLUSIVE_GUIDANCE_PATH))
+        assertTrue(guidance.contains("only the available `datamimic_*` MCP tools"))
+        assertTrue(guidance.contains("Never start data generation"))
+        assertTrue(guidance.contains("Commit only a Ready execution"))
+        assertTrue(guidance.contains("bounded authoring dry run"))
+        assertTrue(Files.notExists(projectDir.resolve(JunieAgent.ROUTING_RULE_PATH)))
     }
 }

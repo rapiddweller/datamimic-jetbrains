@@ -78,6 +78,26 @@ class AgentConnectionTest {
     }
 
     @Test
+    fun `removed agents are unregistered before deciding whether to renew a token`() {
+        var available = listOf(agent)
+        var mayCreateToken = true
+        val dynamicConnection = AgentConnection(
+            activate = { events += "activate $it" },
+            deactivate = { _, _ -> },
+            server = { if (mayCreateToken) McpServer(it, emptyMap(), Instant.EPOCH) else error("removed agents must not create a token") },
+            agents = { available },
+        )
+        dynamicConnection.connect("A")
+        events.clear()
+        available = emptyList()
+        mayCreateToken = false
+
+        dynamicConnection.connect("A")
+
+        assertEquals(listOf("unregister"), events)
+    }
+
+    @Test
     fun `a registered agent can report a non-fatal setup warning`() {
         val warningAgent = object : McpAgent {
             override val displayName = "Warning Agent"
@@ -102,6 +122,28 @@ class AgentConnectionTest {
 
         assertEquals(listOf("unregister", "deactivate A"), events)
         assertEquals(null, connection.activeProjectId)
+    }
+
+    @Test
+    fun `leaving unwinds agents in reverse registration order`() {
+        fun namedAgent(name: String) = object : McpAgent {
+            override val displayName = name
+            override fun register(server: McpServer) = emptyList<String>()
+            override fun unregister() {
+                events += "unregister $name"
+            }
+        }
+        val orderedConnection = AgentConnection(
+            activate = {},
+            deactivate = { _, beforeLastDeactivate -> beforeLastDeactivate() },
+            server = { McpServer(it, emptyMap(), Instant.EPOCH) },
+            agents = { listOf(namedAgent("external"), namedAgent("local")) },
+        )
+        orderedConnection.connect("A")
+
+        orderedConnection.leave()
+
+        assertEquals(listOf("unregister local", "unregister external"), events)
     }
 
     @Test

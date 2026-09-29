@@ -11,6 +11,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectCloseListener
@@ -22,6 +23,7 @@ import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.util.EnvironmentUtil
 import com.rapiddweller.datamimic.core.mcp.AgentConnection
+import com.rapiddweller.datamimic.core.mcp.AiAssistantAgent
 import com.rapiddweller.datamimic.core.mcp.ClaudeCodeAgent
 import com.rapiddweller.datamimic.core.mcp.GitIgnore
 import com.rapiddweller.datamimic.core.mcp.JunieAgent
@@ -239,13 +241,31 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
     /** IDE agents of this window that can be connected automatically. */
     private fun agents(): List<McpAgent> {
         val projectDir = folder?.root ?: return emptyList()
-        val target = identity ?: return emptyList()
-        return discoverSessionAgents(projectDir, EnvironmentUtil.getValue("PATH")) +
-            JunieAgent(
+        if (identity == null) return emptyList()
+        return discoverSessionAgents(projectDir, EnvironmentUtil.getValue("PATH")) + buildList {
+            add(JunieAgent(
                 projectDir,
                 GitIgnore(projectDir, findOnPath("git", EnvironmentUtil.getValue("PATH"))),
                 filesChanged = { refreshJunieFiles(projectDir) },
-            )
+            ))
+            if (project.service<AiAssistantSettings>().publishMcp) {
+                add(AiAssistantAgent(
+                    projectDir,
+                    GitIgnore(projectDir, findOnPath("git", EnvironmentUtil.getValue("PATH"))),
+                    filesChanged = { refreshAiAssistantFiles(projectDir) },
+                ))
+            }
+        }
+    }
+
+    /** Re-publishes the active token after the project setting adds or removes AI Assistant. */
+    internal fun refreshAiAssistant() {
+        val target = identity ?: return
+        if (connection.activeProjectId != target.projectId) return
+        scope.launch {
+            val publication = withContext(Dispatchers.IO) { connection.connect(target.projectId) }
+            report(target, publication)
+        }
     }
 
     private fun group() = NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
@@ -280,20 +300,25 @@ internal fun registerJunieProject(projectDir: Path, path: String?, server: McpSe
     ).register(server)
 
 internal fun unregisterJunieProject(projectDir: Path, path: String?, server: McpServer) {
-    // WHY: cleanup must not overwrite a malformed, tracked, or user-owned configuration.
-    runCatching {
-        JunieAgent(
-            projectDir,
-            GitIgnore(projectDir, findOnPath("git", path)),
-            managedServer = server,
-            filesChanged = { refreshJunieFiles(projectDir) },
-        ).unregister()
-    }
+    JunieAgent(
+        projectDir,
+        GitIgnore(projectDir, findOnPath("git", path)),
+        managedServer = server,
+        filesChanged = { refreshJunieFiles(projectDir) },
+    ).unregister()
 }
 
 internal fun refreshJunieFiles(projectDir: Path) {
+    refreshAgentFiles(projectDir, listOf(JunieAgent.CONFIG_PATH, JunieAgent.EXCLUSIVE_GUIDANCE_PATH, JunieAgent.ROUTING_RULE_PATH))
+}
+
+internal fun refreshAiAssistantFiles(projectDir: Path) {
+    refreshAgentFiles(projectDir, listOf(AiAssistantAgent.CONFIG_PATH))
+}
+
+private fun refreshAgentFiles(projectDir: Path, paths: List<String>) {
     val fileSystem = LocalFileSystem.getInstance()
-    val known = listOf(JunieAgent.CONFIG_PATH, JunieAgent.ROUTING_RULE_PATH).mapNotNull { relativePath ->
+    val known = paths.mapNotNull { relativePath ->
         generateSequence(projectDir.resolve(relativePath)) { it.parent }.firstNotNullOfOrNull(fileSystem::findFileByNioFile)
     }.distinct()
     VfsUtil.markDirtyAndRefresh(false, true, true, *known.toTypedArray())
