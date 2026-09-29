@@ -350,6 +350,13 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
 
     fun workspaceShutdown(projectId: String): Deferred<Unit>? = workspaces.shutdown(projectId)
 
+    /** Drops resources prepared before an IDE window opened, unless a window activated them meanwhile. */
+    @Synchronized
+    fun abandonUnopenedWorkspace(projectId: String): Deferred<Unit>? {
+        if (projectId in activeWindows) return null
+        return workspaces.beginShutdown(projectId, { it.beginShutdown(release = true) }, ::finishShutdown)?.finalization
+    }
+
     fun syncedFile(file: VirtualFile): SyncedFile? = file.toNioPathOrNull()?.let(::syncedFile)
 
     /** The synced project folder [file] belongs to, while its project is open. */

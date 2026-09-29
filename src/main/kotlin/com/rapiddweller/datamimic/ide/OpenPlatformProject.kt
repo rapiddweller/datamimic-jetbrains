@@ -24,6 +24,7 @@ import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -111,6 +112,8 @@ internal suspend fun openPlatformProject(project: Project?, target: PlatformProj
     val origin = (platform.state.value as? AuthState.SignedIn)?.origin ?: return
     var junieServer: McpServer? = null
     var root: Path? = null
+    var workspacePrepared = false
+    var projectOpened = false
     try {
         val projectRoot = ProjectFolder.locationFor(PROJECTS_HOME, origin, target)
         root = projectRoot
@@ -119,7 +122,9 @@ internal suspend fun openPlatformProject(project: Project?, target: PlatformProj
             withContext(Dispatchers.IO) {
                 val folder = ProjectFolder(projectRoot)
                 val identity = FolderIdentity(origin, target.id, target.name)
-                platform.workspace(target.id, folder, identity).sync.syncNow()
+                val workspace = platform.workspace(target.id, folder, identity)
+                workspacePrepared = true
+                workspace.sync.syncNow()
                 try {
                     val server = platform.mcpServer(origin, target.id)
                     registerJunieProject(projectRoot, EnvironmentUtil.getValue("PATH"), server).also {
@@ -135,21 +140,24 @@ internal suspend fun openPlatformProject(project: Project?, target: PlatformProj
         }
         val openedProject = openDownloadedProject(projectRoot)
             ?: throw IllegalStateException("The IDE did not open the downloaded DATAMIMIC project.")
-        junieServer = null
+        projectOpened = true
         if (junieWarnings.isNotEmpty()) {
             Messages.showWarningDialog(openedProject, junieWarnings.joinToString("\n"), "Junie Setup Incomplete")
         }
     } catch (e: CancellationException) {
-        junieServer?.let { server ->
-            withContext(Dispatchers.IO) { unregisterJunieProject(checkNotNull(root), EnvironmentUtil.getValue("PATH"), server) }
-        }
         throw e
     } catch (e: Exception) {
-        junieServer?.let { server ->
-            withContext(Dispatchers.IO) { unregisterJunieProject(checkNotNull(root), EnvironmentUtil.getValue("PATH"), server) }
-        }
         LOG.warn("Downloading ${target.id} failed: $e")
         return Messages.showErrorDialog(project, e.message ?: e.javaClass.simpleName, "Cannot Open Project")
+    } finally {
+        if (workspacePrepared && !projectOpened) withContext(NonCancellable + Dispatchers.IO) {
+            junieServer?.let { server ->
+                runCatching { unregisterJunieProject(checkNotNull(root), EnvironmentUtil.getValue("PATH"), server) }
+                    .onFailure { LOG.warn("Cleaning Junie after failed open of ${target.id} failed", it) }
+            }
+            runCatching { platform.abandonUnopenedWorkspace(target.id)?.await() }
+                .onFailure { LOG.warn("Cleaning workspace after failed open of ${target.id} failed", it) }
+        }
     }
 }
 

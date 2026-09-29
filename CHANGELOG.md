@@ -30,6 +30,7 @@ MCP access and a cleaner task UI.
 - Fix generation task history with the Platform 4.0.1 task API and show useful validation details for rejected
   requests.
 - Refresh plugin-managed Junie files in the IDE after registration, renewal, and cleanup.
+- Ignore Junie's transient `.output.json` scratch file so it cannot block a generation run after the agent removes it.
 - Make the development artifact downloaded from GitHub Actions directly installable in JetBrains IDEs.
 
 ## [0.4.0]
