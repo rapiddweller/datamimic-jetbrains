@@ -88,7 +88,7 @@ class LiveGenerationContractTest {
     }
 
     @Test
-    fun `history sends only generation routes with newest first pagination and no artifacts`() {
+    fun `history sends the Platform 4 0 1 filter shape with newest first pagination`() {
         platform.generationHistoryResponse = """{
             "data":[
               {"task_id":"finalizing","status":"FINALIZING","name":"GENERATE","date_queued":"2026-09-27T12:00:00Z"},
@@ -110,7 +110,7 @@ class LiveGenerationContractTest {
 
         val request = json.parseToJsonElement(platform.generationSearchRequests.single()).jsonObject
         val filters = request.getValue("filters").jsonObject
-        assertEquals(false, filters.getValue("get_artifacts_metadata").jsonPrimitive.content.toBoolean())
+        assertTrue("Platform 4.0.1 rejects this newer filter", "get_artifacts_metadata" !in filters)
         assertEquals(
             listOf(
                 "datamimic.standard",
@@ -143,9 +143,21 @@ class LiveGenerationContractTest {
             "generation-1",
             statusRequest.getValue("filters").jsonObject.getValue("task_id").jsonPrimitive.content,
         )
-        assertEquals(
-            false,
-            statusRequest.getValue("filters").jsonObject.getValue("get_artifacts_metadata").jsonPrimitive.content.toBoolean(),
-        )
+        assertTrue("Platform 4.0.1 rejects this newer filter", "get_artifacts_metadata" !in statusRequest.getValue("filters").jsonObject)
+    }
+
+    @Test
+    fun `validation errors identify the rejected field without echoing its input`() {
+        platform.generationHistoryStatus = 422
+        platform.generationHistoryResponse = """{
+            "detail":"Request validation failed",
+            "code":"VALIDATION_ERROR",
+            "errors":[{"loc":["body","filters","future_filter"],"msg":"Extra inputs are not permitted","input":"secret"}]
+        }"""
+
+        val error = assertThrows(PlatformException::class.java) { api.history("p1", 1) }
+
+        assertTrue(error.message!!.contains("filters.future_filter: Extra inputs are not permitted"))
+        assertTrue(!error.message!!.contains("secret"))
     }
 }

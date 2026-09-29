@@ -6,6 +6,7 @@ package com.rapiddweller.datamimic.core
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URI
@@ -103,7 +104,21 @@ enum class PlatformErrorCode {
 }
 
 @Serializable
-private data class PlatformErrorBody(val detail: String? = null, val code: PlatformErrorCode = PlatformErrorCode.UNKNOWN)
+private data class PlatformValidationError(val loc: List<JsonPrimitive> = emptyList(), val msg: String? = null)
+
+@Serializable
+private data class PlatformErrorBody(
+    val detail: String? = null,
+    val code: PlatformErrorCode = PlatformErrorCode.UNKNOWN,
+    val errors: List<PlatformValidationError> = emptyList(),
+) {
+    fun message(): String? {
+        val validation = errors.firstOrNull() ?: return detail
+        val path = validation.loc.dropWhile { it.content == "body" }.joinToString(".") { it.content }
+        val message = listOfNotNull(path.takeIf(String::isNotBlank), validation.msg).joinToString(": ")
+        return listOfNotNull(detail?.takeIf(String::isNotBlank), message.takeIf(String::isNotBlank)).joinToString(": ").ifBlank { null }
+    }
+}
 
 class PlatformException(val status: Int, val code: PlatformErrorCode, message: String) : RuntimeException(message)
 
@@ -240,7 +255,7 @@ internal fun HttpClient.sendPlatformRequest(
 internal fun PlatformResponse.orThrow(method: HttpMethod, path: String): PlatformResponse {
     if (status in 200..299) return this
     val error = runCatching { json.decodeFromString<PlatformErrorBody>(body) }.getOrNull()
-    val detail = error?.detail ?: body.take(200).ifBlank { "HTTP $status" }
+    val detail = error?.message() ?: body.take(200).ifBlank { "HTTP $status" }
     throw PlatformException(status, error?.code ?: PlatformErrorCode.UNKNOWN, "$detail (${method.name} $path → $status)")
 }
 
