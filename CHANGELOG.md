@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- Rename the task-history tool window to **Generation Tasks**, add distinct native icons, and consolidate preview
+  samples into one selectable Preview tab.
+- Replace the dense wordmark plugin logo with a compact gears-only logo for the IDE and Marketplace.
+
 ## [0.4.0]
 
 - Browse paginated generation task history and reopen task status, logs, and preview samples.

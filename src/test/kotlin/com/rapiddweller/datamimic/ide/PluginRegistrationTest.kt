@@ -39,6 +39,7 @@ class PluginRegistrationTest : BasePlatformTestCase() {
             ToolWindowEP.EP_NAME.extensionList.any {
                 it.id == GENERATION_TOOL_WINDOW_ID &&
                     it.anchor == "bottom" &&
+                    it.icon == "/icons/generation.svg" &&
                     it.factoryClass == GenerationTasksToolWindowFactory::class.java.name
             },
         )

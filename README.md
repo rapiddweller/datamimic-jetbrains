@@ -34,7 +34,7 @@ generation runs, and MCP access for IDE agents.
   keeps only the platform/project identity and task type, and validates that the opened folder is connected before it
   runs. Each run shows platform status, logs, refresh errors, and preview samples when available; **Stop** requests
   platform cancellation, while closing a view only stops local observation.
-- The bottom **DATAMIMIC Generation** tool window lists recent platform tasks. Select a task to reopen its logs and
+- The bottom **Generation Tasks** tool window lists recent platform generation tasks. Select a task to reopen its logs and
   preview samples. Successful tasks also expose **Artifacts**: save one file, open saved text files in the IDE, or
   download every artifact as a ZIP.
 
