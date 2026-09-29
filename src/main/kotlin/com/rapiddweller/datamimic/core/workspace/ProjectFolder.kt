@@ -147,7 +147,7 @@ class ProjectFolder(root: Path) {
         private val claimedLocks = java.util.concurrent.ConcurrentHashMap.newKeySet<Path>()
 
         /** Folders and files of the IDE, VCS and agents that live next to the project files but are never synced. */
-        private val LOCAL_ONLY_NAMES = setOf(META_DIR, ".idea", ".git", ".junie", ".claude", ".vscode", ".DS_Store")
+        private val LOCAL_ONLY_NAMES = setOf(META_DIR, ".idea", ".git", ".junie", ".ai", ".claude", ".vscode", ".DS_Store", ".output.json")
 
         /** File name endings of IDE module files and of the IDE's safe write (`name.tmp`, then backup `name~`). */
         private val LOCAL_ONLY_SUFFIXES = listOf(".iml", ".tmp", "~")

@@ -57,7 +57,7 @@ flowchart LR
   platform refuses restores the file; a refused move is undone locally.
 - **Writing.** Editing is refused only while another client is known to hold the file's lock. Offline or while the
   lock state is unknown, editing is allowed: the upload's ETag still fences every change.
-- **Never synced:** `.datamimic`, `.idea`, `.git`, `.junie`, `.claude`, `.vscode`, `.DS_Store`, `*.iml`, and the
+- **Never synced:** `.datamimic`, `.idea`, `.git`, `.junie`, `.claude`, `.vscode`, `.DS_Store`, `.output.json`, `*.iml`, and the
   IDE's safe-write files (`*.tmp`, `*~`).
 - **Generate Data** and the native Run Configuration share one flow: they sync the folder first (agents write files
   the IDE may not have noticed) and warn about files that are not on the platform, conflicts included.

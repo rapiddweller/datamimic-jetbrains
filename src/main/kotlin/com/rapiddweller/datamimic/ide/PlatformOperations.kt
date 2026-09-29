@@ -10,7 +10,6 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.EDT
-import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -18,7 +17,6 @@ import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 import com.rapiddweller.datamimic.core.PlatformProject
 import com.rapiddweller.datamimic.core.generation.TaskType
-import com.rapiddweller.datamimic.core.mcp.MCP_SERVER_NAME
 import com.rapiddweller.datamimic.ide.generation.RunResults
 import com.rapiddweller.datamimic.ide.generation.startGeneration
 import kotlinx.coroutines.CancellationException
@@ -26,20 +24,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
-import java.awt.datatransfer.StringSelection
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
 import javax.swing.Icon
 
 internal const val NOTIFICATION_GROUP = "DATAMIMIC"
-
-private val prettyJson = Json { prettyPrint = true }
 
 /** Everything the user can do with a project row; [project] and [active] are null on the Welcome screen. */
 internal class PlatformOperations(
@@ -59,41 +46,14 @@ internal class PlatformOperations(
         if (node is PlatformNode.ProjectNode) chooseTaskType(node.project)
     }
 
-    /** AI Assistant has no API or file for its MCP servers, so its entry is handed over for "Add → As JSON". */
-    val copyAiAssistantConfiguration = action("Copy MCP Configuration for AI Assistant", AllIcons.Actions.Copy, ::isActiveProjectNode) { node ->
-        if (node is PlatformNode.ProjectNode) copyAiAssistantConfiguration(node.project)
-    }
-
     fun openProject(target: PlatformProject) {
         // WHY: opening a project disposes the Welcome screen and its panel scope.
         platform.scope.launch(Dispatchers.EDT) { open(project, target) }
     }
 
     fun signOut() = perform("Sign Out Failed") {
-        // WHY: agents, locks and project tokens can only be given back while the session still exists.
-        disconnectAllWindowsForSignOut()
         val revoked = withContext(Dispatchers.IO) { platform.signOut() }
         if (!revoked) notify("Signed out locally. The platform was unreachable, so the session expires there on its own.", NotificationType.WARNING)
-    }
-
-    private fun copyAiAssistantConfiguration(target: PlatformProject) = perform("Cannot Create the MCP Configuration") {
-        val server = withContext(Dispatchers.IO) { platform.mcpServer(target.id) }
-        val configuration = buildJsonObject {
-            putJsonObject("mcpServers") {
-                putJsonObject(MCP_SERVER_NAME) {
-                    put("type", "streamable-http")
-                    put("url", server.url)
-                    putJsonObject("headers") { server.headers.forEach { (name, value) -> put(name, value) } }
-                }
-            }
-        }
-        CopyPasteManager.getInstance().setContents(StringSelection(prettyJson.encodeToString(JsonObject.serializer(), configuration)))
-        val expires = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault()).format(server.expiresAt)
-        notify(
-            "Copied. In Settings | Tools | AI Assistant | Model Context Protocol (MCP), choose Add, then As JSON, at project level. " +
-                "The token in it is valid until $expires; copy again after that.",
-            NotificationType.INFORMATION,
-        )
     }
 
     private fun chooseTaskType(target: PlatformProject) {

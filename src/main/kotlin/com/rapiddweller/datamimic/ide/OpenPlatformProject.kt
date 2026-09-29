@@ -17,11 +17,14 @@ import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.withModalProgress
 import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
+import com.intellij.util.EnvironmentUtil
 import com.rapiddweller.datamimic.core.PlatformProject
+import com.rapiddweller.datamimic.core.mcp.McpServer
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -107,21 +110,54 @@ internal suspend fun signInInteractively(project: Project?): Boolean {
 internal suspend fun openPlatformProject(project: Project?, target: PlatformProject) {
     val platform = DatamimicPlatform.getInstance()
     val origin = (platform.state.value as? AuthState.SignedIn)?.origin ?: return
+    var junieServer: McpServer? = null
+    var root: Path? = null
+    var workspacePrepared = false
+    var projectOpened = false
     try {
-        val root = ProjectFolder.locationFor(PROJECTS_HOME, origin, target)
-        if (ProjectUtil.findAndFocusExistingProjectForPath(root) != null) return
-        withModalProgress(owner(project), "Downloading ${target.name}", Cancellation.cancellable()) {
+        val projectRoot = ProjectFolder.locationFor(PROJECTS_HOME, origin, target)
+        root = projectRoot
+        if (ProjectUtil.findAndFocusExistingProjectForPath(projectRoot) != null) return
+        val junieWarnings = withModalProgress(owner(project), "Downloading ${target.name}", Cancellation.cancellable()) {
             withContext(Dispatchers.IO) {
-                val folder = ProjectFolder(root)
-                platform.workspace(target.id, folder, FolderIdentity(origin, target.id, target.name)).sync.syncNow()
+                val folder = ProjectFolder(projectRoot)
+                val identity = FolderIdentity(origin, target.id, target.name)
+                val workspace = platform.workspace(target.id, folder, identity)
+                workspacePrepared = true
+                workspace.sync.syncNow()
+                try {
+                    val server = platform.mcpServer(origin, target.id)
+                    registerJunieProject(projectRoot, EnvironmentUtil.getValue("PATH"), server).also {
+                        junieServer = server
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    LOG.warn("Preparing Junie for ${target.id} failed", e)
+                    listOf("Junie MCP: ${e.message ?: e.javaClass.simpleName}")
+                }
             }
         }
-        openDownloadedProject(root)
+        val openedProject = openDownloadedProject(projectRoot)
+            ?: throw IllegalStateException("The IDE did not open the downloaded DATAMIMIC project.")
+        projectOpened = true
+        if (junieWarnings.isNotEmpty()) {
+            Messages.showWarningDialog(openedProject, junieWarnings.joinToString("\n"), "Junie Setup Incomplete")
+        }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         LOG.warn("Downloading ${target.id} failed: $e")
         return Messages.showErrorDialog(project, e.message ?: e.javaClass.simpleName, "Cannot Open Project")
+    } finally {
+        if (workspacePrepared && !projectOpened) withContext(NonCancellable + Dispatchers.IO) {
+            junieServer?.let { server ->
+                runCatching { unregisterJunieProject(checkNotNull(root), EnvironmentUtil.getValue("PATH"), server) }
+                    .onFailure { LOG.warn("Cleaning Junie after failed open of ${target.id} failed", it) }
+            }
+            runCatching { platform.abandonUnopenedWorkspace(target.id)?.await() }
+                .onFailure { LOG.warn("Cleaning workspace after failed open of ${target.id} failed", it) }
+        }
     }
 }
 

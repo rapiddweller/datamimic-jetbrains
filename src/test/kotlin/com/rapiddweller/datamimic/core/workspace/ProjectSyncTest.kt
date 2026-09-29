@@ -248,6 +248,44 @@ class ProjectSyncTest {
     }
 
     @Test
+    fun `agent output is never synced, but other hidden paths are`() {
+        syncNow()
+        write(".output.json", "created")
+        assertNull(folder.pathOf(file(".output.json")))
+        session.sync.localChanged(".output.json")
+        syncNow()
+        awaitUploads()
+
+        write(".output.json", "changed")
+        session.sync.localChanged(".output.json")
+        syncNow()
+        awaitUploads()
+
+        Files.delete(file(".output.json"))
+        syncNow()
+        awaitUploads()
+
+        assertEquals(0, platform.uploadsReceived)
+        assertTrue(platform.creates.isEmpty())
+        assertTrue(platform.deletes.isEmpty())
+        assertTrue(session.saver.unconfirmedPaths().isEmpty())
+
+        write(".ai/mcp/mcp.json", "token")
+        session.sync.localChanged(".ai/mcp/mcp.json")
+        syncNow()
+        awaitUploads()
+
+        assertEquals(0, platform.uploadsReceived)
+        assertTrue(platform.creates.isEmpty())
+
+        write(".project/config.xml", "<config/>")
+        syncNow()
+        awaitUploads()
+
+        assertEquals(listOf(".project/config.xml"), platform.creates)
+    }
+
+    @Test
     fun `deleting many files at once in the IDE only reports them as missing`() {
         (1..6).forEach { platform.files["data/f$it.csv"] = "x" to "etag-1" }
         syncNow()

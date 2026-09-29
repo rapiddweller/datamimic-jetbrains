@@ -260,7 +260,7 @@ class ProjectFolderExcludePolicy(private val project: Project) : DirectoryIndexE
     override fun getExcludeUrlsForProject(): Array<String> {
         val base = project.basePath ?: return emptyArray()
         if (!ProjectFolder(Path.of(base)).isProjectFolder()) return emptyArray()
-        return arrayOf(VfsUtilCore.pathToUrl("$base/${ProjectFolder.META_DIR}"))
+        return listOf(ProjectFolder.META_DIR, ".junie", ".ai").map { VfsUtilCore.pathToUrl("$base/$it") }.toTypedArray()
     }
 }
 

@@ -38,6 +38,8 @@
         <writingAccessProvider implementation="com.rapiddweller.datamimic.ide.editing.PlatformWritingAccess"/>
         <editorNotificationProvider implementation="com.rapiddweller.datamimic.ide.editing.PlatformFileBanner"/>
         <directoryIndexExcludePolicy implementation="com.rapiddweller.datamimic.ide.editing.ProjectFolderExcludePolicy"/>
+        <projectConfigurable id="datamimic.aiAssistant" displayName="DATAMIMIC" parentId="tools"
+                             instance="com.rapiddweller.datamimic.ide.AiAssistantSettingsConfigurable"/>
         <notificationGroup id="DATAMIMIC" displayType="BALLOON"/>
         <postStartupActivity implementation="com.rapiddweller.datamimic.ide.ActiveProjectStartup"/>
     </extensions>

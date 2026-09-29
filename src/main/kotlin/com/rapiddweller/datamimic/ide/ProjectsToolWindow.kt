@@ -113,10 +113,10 @@ internal class ProjectsPanel(private val project: Project?, private val scope: C
     private var loadJob: Job? = null
 
     init {
-        // WHY: generating and agent configuration act on a project window, which the Welcome screen does not have.
+        // WHY: generating acts on a project window, which the Welcome screen does not have.
         if (projectActionsVisible) {
             toolbarActions.addAll(Separator.getInstance(), operations.generate)
-            contextActions.addAll(operations.generate, operations.copyAiAssistantConfiguration)
+            contextActions.add(operations.generate)
         }
         toolbarActions.addAll(Separator.getInstance(), action("Sign Out", AllIcons.Actions.Exit, ::isSignedIn) { operations.signOut() })
         toolbar = ActionManager.getInstance().createActionToolbar("DatamimicProjects", toolbarActions, true)

@@ -23,8 +23,10 @@ generation runs, and MCP access for IDE agents.
   or *Delete on platform…*.
 - Each window is one platform project, like in the platform UI; it scopes files, locks and IDE agents
   ([ADR 0002](docs/adr/0002-active-project-scope.md)).
-- IDE agents are connected to the window's project MCP server automatically: Claude Code (local scope) and Junie
-  (the folder's `.junie/mcp/mcp.json` and a project-local routing rule). AI Assistant: *Copy MCP Configuration for AI Assistant*.
+- IDE agents are connected to the project's MCP server automatically: Claude Code (local scope) and Junie
+  (`.junie/mcp/mcp.json` plus a project-local routing rule). The plugin creates and renews a short-lived project access
+  token from the existing platform session. AI Assistant is off by default; enable **Settings | Tools | DATAMIMIC** to
+  publish its project-scoped `.ai/mcp/mcp.json` entry.
 - Server-side edit locks: showing a file takes its lock, a banner explains when someone else holds it, and
   *Take over…* overrides it after confirmation.
 - Completion and checks for the folder's XML files from the platform's language server
@@ -40,17 +42,24 @@ generation runs, and MCP access for IDE agents.
 
 ## Junie routing
 
-The plugin adds `.junie/rules/datamimic.md` for a connected DATAMIMIC project. It routes DATAMIMIC Platform project
-requests to a read-only `datamimic_*` MCP tool first and forbids a fallback to local project content when those tools
-are unavailable or fail. It also prevents delegation and agent-started data generation; generation remains an explicit
-user action through the IDE's **DATAMIMIC Generation** Run Configuration or the Platform UI. The detailed authoring
-workflow stays in Platform `MCP_SERVER_INSTRUCTIONS`.
+Without existing Junie guidance, the plugin adds `.junie/AGENTS.md` for a connected DATAMIMIC project. It combines
+Junie-specific routing with a synchronized projection of Platform `MCP_SERVER_INSTRUCTIONS`: use canonical DM JSON,
+build exactly one candidate, run the bounded authoring dry run through `datamimic_build_model`, repair rejected work
+from its diagnostics, and commit only a Ready execution. It also forbids local project fallback, delegation, and
+agent-started generation; generation remains an explicit user action through the IDE's **DATAMIMIC Generation** Run
+Configuration or the Platform UI.
 
-Junie must use its default Guidelines path. A custom Guidelines path bypasses project rules and cannot be detected
-through a stable public JetBrains API; clear that setting or include the same routing manually. An existing
-`.junie/AGENTS.md` is exclusive guidance, so the plugin connects MCP, warns about the conflict, and leaves the file
-unchanged. The credential-free routing rule remains when the project disconnects; only the token-bearing MCP entry
-is removed.
+The plugin never replaces user-owned `.junie/AGENTS.md`, root `AGENTS.md`, `.junie/playbook.md`, or user rules. With
+combined guidance it uses `.junie/rules/datamimic.md` and warns when older Junie may need the routing included manually.
+Exclusive or legacy `.junie/guidelines.md` / `.junie/guidelines/` guidance remains untouched and requires manual
+inclusion. The token-bearing MCP entry is local, Git-ignored, and removed before its project token is revoked.
+
+## AI Assistant MCP
+
+Enable **Publish DATAMIMIC MCP configuration for AI Assistant** in **Settings | Tools | DATAMIMIC** for a connected
+project. The plugin owns only its `datamimic-platform` entry in `.ai/mcp/mcp.json`, renews it with the project token,
+and removes that exact entry when disabled or disconnected. AI Assistant still needs **Automatically enable new and
+changed MCP servers** and **Pass custom MCP servers**; this file alone does not prove the MCP is active in a chat.
 
 ## Architecture
 
@@ -92,12 +101,16 @@ flowchart TB
 | Unit and plugin tests | `./gradlew test` |
 | Run an IDE with the plugin | `./gradlew runIde` |
 | Package | `./gradlew buildPlugin` |
+| Check Junie guidance against Platform | `./scripts/sync-agent-guidance.sh --check <platform-checkout>` |
 
-CI (`.github/workflows/build.yml`) tests and builds pull requests, pushes to `main`, and version tags; the ZIP is
-attached to the run. Non-tag builds use `<highest-reachable-semver-tag>-dev.<github-run-number>` and are development
-artifacts, not releases; local builds default to `0.0.0-dev`. Releasing: add `## [<version>]` to `CHANGELOG.md`, then
-push `v<version>`. A tag build uses the exact tag version, runs the Plugin Verifier, and publishes a GitHub release
-with the ZIP and that CHANGELOG section.
+CI (`.github/workflows/build.yml`) tests and builds pull requests, pushes to `main`, and version tags. The downloaded
+`datamimic-plugin.zip` artifact is directly installable with **Install Plugin from Disk**. Non-tag builds use
+`<highest-reachable-semver-tag>-dev.<github-run-number>` and are development artifacts, not releases; local builds
+default to `0.0.0-dev`. Do not upload either to JetBrains Marketplace. Releasing: add `## [<version>]` to
+`CHANGELOG.md`, then push `v<version>`. A tag build uses the exact tag version, renders that complete CHANGELOG section
+as the plugin's **What's New** notes, verifies non-empty packaged notes with the expected number of list items, runs
+the Plugin Verifier, and publishes a GitHub release with the original versioned distribution ZIP. Marketplace keeps
+each uploaded version's notes in its version history; its main **What's New** view shows the latest version.
 
 Manual test against a local platform: start it with `DM_PLATFORM_PUBLIC_URL=http://localhost:3000`, then in the sandbox
 IDE open the DATAMIMIC tool window and sign in with `http://localhost:3000` (exactly the public URL).

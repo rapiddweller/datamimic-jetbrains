@@ -249,6 +249,7 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
 
     /** Blocking; call off the UI thread. @return false when the platform could not revoke the session. */
     fun signOut(): Boolean {
+        runBlocking { disconnectAllWindowsForSignOut() }
         val shutdowns = synchronized(this) {
             workspaces.closeAdmission()
             closeWorkspacesLocked(release = true)
@@ -311,17 +312,27 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
      * An IDE window left [projectId]. When no window uses it anymore, its edit locks go back to the platform and the
      * agents' project token is revoked. Blocking; call off the UI thread.
      */
-    fun deactivate(projectId: String) {
+    fun deactivate(projectId: String, beforeLastDeactivate: () -> Unit = {}) {
         synchronized(this) {
             val remaining = (activeWindows[projectId] ?: 0) - 1
             if (remaining > 0) activeWindows[projectId] = remaining else activeWindows.remove(projectId)
-            if (remaining > 0) null else workspaces.beginShutdown(projectId, { it.beginShutdown(release = true) }, ::finishShutdown)
+            if (remaining > 0) null else {
+                beforeLastDeactivate()
+                workspaces.beginShutdown(projectId, { it.beginShutdown(release = true) }, ::finishShutdown)
+            }
         }
     }
 
     /** The MCP server of [projectId] as IDE agents need it. Blocking; call off the UI thread. */
     fun mcpServer(projectId: String): McpServer {
         val origin = sessions.current()?.origin ?: throw SessionExpiredException()
+        return mcpServer(origin, projectId)
+    }
+
+    /** Refuses to publish a token for a folder owned by another platform. Blocking; call off the UI thread. */
+    fun mcpServer(origin: PlatformOrigin, projectId: String): McpServer {
+        val current = sessions.current()?.origin ?: throw SessionExpiredException()
+        check(current == origin) { "The DATAMIMIC session is connected to another platform." }
         return mcpAccess.server(origin, projectId)
     }
 
@@ -338,6 +349,13 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     fun openWorkspaces(): List<WorkspaceSession> = workspaces.values()
 
     fun workspaceShutdown(projectId: String): Deferred<Unit>? = workspaces.shutdown(projectId)
+
+    /** Drops resources prepared before an IDE window opened, unless a window activated them meanwhile. */
+    @Synchronized
+    fun abandonUnopenedWorkspace(projectId: String): Deferred<Unit>? {
+        if (projectId in activeWindows) return null
+        return workspaces.beginShutdown(projectId, { it.beginShutdown(release = true) }, ::finishShutdown)?.finalization
+    }
 
     fun syncedFile(file: VirtualFile): SyncedFile? = file.toNioPathOrNull()?.let(::syncedFile)
 

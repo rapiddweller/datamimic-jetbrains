@@ -10,6 +10,7 @@ import com.rapiddweller.datamimic.core.SessionService
 import com.rapiddweller.datamimic.core.json
 import com.rapiddweller.datamimic.core.process.runCommand
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -72,7 +73,7 @@ class McpTest {
     }
 
     @Test
-    fun `a token with enough time left is reused, a nearly expired one is replaced`() {
+    fun `a token with enough time left is reused, then a replacement leaves the old token valid`() {
         val first = access.server(platform.origin, "p1")
         now = now.plus(Duration.ofHours(12))
         assertEquals(first.headers["Authorization"], access.server(platform.origin, "p1").headers["Authorization"])
@@ -81,7 +82,8 @@ class McpTest {
         val renewed = access.server(platform.origin, "p1")
 
         assertEquals("Bearer secret-2", renewed.headers["Authorization"])
-        assertEquals(1, platform.projectTokens.size)
+        assertEquals(2, platform.projectTokens.size)
+        assertTrue(platform.projectTokens.values.any { it.first == "secret-1" })
     }
 
     @Test
@@ -92,6 +94,17 @@ class McpTest {
         access.revoke(platform.origin, "p1")
 
         assertTrue(platform.projectTokens.isEmpty())
+    }
+
+    @Test
+    fun `separate IDE instances never share a project token`() {
+        val otherInstance = McpAccess(tokens, "IU", "other-ide-binding", clock)
+
+        val first = access.server(platform.origin, "p1")
+        val second = otherInstance.server(platform.origin, "p1")
+
+        assertNotEquals(first.headers["Authorization"], second.headers["Authorization"])
+        assertEquals(2, platform.projectTokens.size)
     }
 
     @Test
@@ -129,7 +142,7 @@ class McpTest {
     }
 
     @Test
-    fun `junie gets the server in the project's mcp json, next to the user's own servers, and kept out of git`() {
+    fun `junie gets a short lived project token next to the user's own servers and kept out of git`() {
         val projectDir = temp.newFolder("junie-project")
         File(projectDir, ".git/info").mkdirs()
         val config = File(projectDir, ".junie/mcp/mcp.json").apply {
@@ -139,16 +152,20 @@ class McpTest {
         val rootGuidance = File(projectDir, "AGENTS.md").apply { writeText("user root guidance\n") }
         val agent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null))
 
-        agent.register(McpServer("https://dm.example/mcp", mapOf("Authorization" to "Bearer t"), Instant.EPOCH))
-        agent.register(McpServer("https://dm.example/mcp", mapOf("Authorization" to "Bearer t2"), Instant.EPOCH))
+        agent.register(server("https://dm.example/mcp"))
+        agent.register(server("https://dm.example/mcp"))
 
         val written = json.parseToJsonElement(config.readText()).jsonObject
         val servers = written.getValue("mcpServers").jsonObject
         assertEquals(setOf("github", "datamimic-platform"), servers.keys)
-        assertEquals("Bearer t2", servers.getValue("datamimic-platform").jsonObject.getValue("headers").jsonObject.getValue("Authorization").jsonPrimitive.content)
+        val datamimic = servers.getValue("datamimic-platform").jsonObject
+        assertEquals("https://dm.example/mcp", datamimic.getValue("url").jsonPrimitive.content)
+        assertEquals("Bearer token", datamimic.getValue("headers").jsonObject.getValue("Authorization").jsonPrimitive.content)
+        assertEquals("binding", datamimic.getValue("headers").jsonObject.getValue("X-DATAMIMIC-Client-Binding").jsonPrimitive.content)
+        assertEquals("datamimic-jetbrains", datamimic.getValue("headers").jsonObject.getValue("X-DATAMIMIC-Managed-By").jsonPrimitive.content)
         assertTrue("other settings survive", "other" in written)
         assertEquals(
-            setOf("/.junie/mcp/mcp.json", "/.junie/rules/datamimic.md"),
+            setOf("/.junie/mcp/mcp.json", "/.junie/mcp/.datamimic-tmp", "/.junie/rules/datamimic.md"),
             File(projectDir, ".git/info/exclude").readLines().filter { it.isNotBlank() }.toSet(),
         )
         if (!isWindows()) assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(config.toPath())))
@@ -159,22 +176,223 @@ class McpTest {
         assertTrue(routing.contains("DATAMIMIC Generation Run configuration"))
         assertTrue(routing.contains("sign in or reconnect"))
         assertTrue(routing.contains("or a subagent"))
+        assertTrue(routing.contains("canonical DM JSON"))
+        assertTrue(routing.contains("one outer CompileModelRequest"))
+        assertTrue(routing.contains("bounded authoring dry run"))
+        assertTrue(routing.contains("there is no separate dry-run tool"))
+        assertTrue(routing.contains("poll only with datamimic_get_authoring_execution"))
+        assertTrue(routing.contains("Commit only a Ready execution"))
+        assertTrue(routing.contains("calling datamimic_commit_model"))
+        assertTrue(routing.contains("After every create or update"))
         assertEquals("user root guidance\n", rootGuidance.readText())
 
-        agent.unregister()
-        assertEquals(setOf("github"), json.parseToJsonElement(config.readText()).jsonObject.getValue("mcpServers").jsonObject.keys)
+        assertEquals(setOf("github", "datamimic-platform"), json.parseToJsonElement(config.readText()).jsonObject.getValue("mcpServers").jsonObject.keys)
         assertTrue(File(projectDir, ".junie/rules/datamimic.md").exists())
     }
 
     @Test
-    fun `junie's config is removed when only the DATAMIMIC server was in it`() {
+    fun `junie unregisters only its token-bearing entry`() {
         val projectDir = temp.newFolder("fresh")
-        val agent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null))
+        val agent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null), managedServer = server("https://dm.example/mcp"))
 
-        agent.register(McpServer("https://dm.example/mcp", emptyMap(), Instant.EPOCH))
+        agent.register(server("https://dm.example/mcp"))
         agent.unregister()
 
         assertFalse(File(projectDir, ".junie/mcp/mcp.json").exists())
+    }
+
+    @Test
+    fun `AI Assistant renews only its entry and preserves the user's configuration`() {
+        val projectDir = temp.newFolder("ai-project")
+        File(projectDir, ".git/info").mkdirs()
+        val config = File(projectDir, ".ai/mcp/mcp.json").apply {
+            parentFile.mkdirs()
+            writeText("""{"mcpServers":{"github":{"command":"docker"}},"other":true}""")
+        }
+        val first = server("https://dm.example/mcp")
+        val renewed = McpServer(first.url, first.headers + ("Authorization" to "Bearer renewed"), Instant.EPOCH)
+        val agent = AiAssistantAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null))
+
+        agent.register(first)
+        agent.register(renewed)
+        assertEquals(
+            "Bearer renewed",
+            json.parseToJsonElement(config.readText()).jsonObject.getValue("mcpServers").jsonObject
+                .getValue(MCP_SERVER_NAME).jsonObject.getValue("headers").jsonObject.getValue("Authorization").jsonPrimitive.content,
+        )
+        agent.unregister()
+
+        val written = json.parseToJsonElement(config.readText()).jsonObject
+        assertEquals(setOf("github"), written.getValue("mcpServers").jsonObject.keys)
+        assertTrue("other settings survive", written.getValue("other").jsonPrimitive.boolean)
+        assertEquals(
+            setOf("/.ai/mcp/mcp.json", "/.ai/mcp/.datamimic-tmp"),
+            File(projectDir, ".git/info/exclude").readLines().filter { it.isNotBlank() }.toSet(),
+        )
+    }
+
+    @Test
+    fun `AI Assistant cleanup survives a new agent instance and preserves user ignore content`() {
+        val projectDir = temp.newFolder("empty-ai-project")
+        val config = File(projectDir, ".ai/mcp/mcp.json").apply {
+            parentFile.mkdirs()
+            writeText("")
+        }
+        val server = server("https://dm.example/mcp")
+        AiAssistantAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server)
+        AiAssistantAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null), managedServer = server).unregister()
+        assertFalse("a plugin-only config is removed after restart", config.exists())
+        assertFalse(Files.exists(projectDir.toPath().resolve(".ai")))
+
+        val userIgnoreProject = temp.newFolder("user-ignore-ai-project").toPath()
+        val ignore = userIgnoreProject.resolve(".ai/.gitignore").toFile().apply {
+            parentFile.mkdirs()
+            writeText("user-rule\n")
+        }
+        AiAssistantAgent(userIgnoreProject, GitIgnore(userIgnoreProject, git = null)).register(server)
+        AiAssistantAgent(userIgnoreProject, GitIgnore(userIgnoreProject, git = null), managedServer = server).unregister()
+        assertEquals("user-rule\n", ignore.readText())
+    }
+
+    @Test
+    fun `AI Assistant rejects malformed and user-owned configuration`() {
+        val projectDir = temp.newFolder("manual-ai-project")
+        val config = File(projectDir, ".ai/mcp/mcp.json").apply {
+            parentFile.mkdirs()
+            writeText("{not json")
+        }
+        val agent = AiAssistantAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null))
+
+        assertThrows(Exception::class.java) { agent.register(server("https://dm.example/mcp")) }
+        assertEquals("{not json", config.readText())
+        config.writeText("""{"mcpServers":{"datamimic-platform":{"url":"https://dm.example/mcp"}}}""")
+        assertThrows(McpAgentException::class.java) { agent.register(server("https://dm.example/mcp")) }
+    }
+
+    @Test
+    fun `AI Assistant shares symlink and tracked configuration protection`() {
+        val linkedProject = temp.newFolder("linked-ai-project")
+        val target = temp.newFolder("external-ai")
+        Files.createSymbolicLink(File(linkedProject, ".ai").toPath(), target.toPath())
+
+        assertThrows(McpAgentException::class.java) {
+            AiAssistantAgent(linkedProject.toPath(), GitIgnore(linkedProject.toPath(), git = null)).register(server("https://dm.example/mcp"))
+        }
+        assertFalse(File(target, "mcp/mcp.json").exists())
+
+        assumeTrue("Git is available", gitAvailable())
+        val repository = temp.newFolder("tracked-ai-project")
+        git(repository, "init")
+        val config = File(repository, AiAssistantAgent.CONFIG_PATH).apply {
+            parentFile.mkdirs()
+            writeText("{\"mcpServers\":{}}")
+        }
+        git(repository, "add", AiAssistantAgent.CONFIG_PATH)
+
+        assertThrows(McpAgentException::class.java) {
+            AiAssistantAgent(repository.toPath(), GitIgnore(repository.toPath(), Path.of("git"))).register(server("https://dm.example/mcp"))
+        }
+        assertEquals("{\"mcpServers\":{}}", config.readText())
+    }
+
+    @Test
+    fun `junie leaves foreign malformed and differently scoped configuration alone when disconnecting`() {
+        val projectDir = temp.newFolder("foreign-junie")
+        val config = File(projectDir, ".junie/mcp/mcp.json").apply {
+            parentFile.mkdirs()
+            writeText("""{"mcpServers":{"github":{"command":"docker"},"datamimic-platform":{"url":"https://other.example/mcp","headers":{"Authorization":"Bearer user-token"}}},"other":true}""")
+        }
+        val agent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null), managedServer = server("https://dm.example/mcp"))
+
+        agent.unregister()
+
+        assertEquals(
+            """{"mcpServers":{"github":{"command":"docker"},"datamimic-platform":{"url":"https://other.example/mcp","headers":{"Authorization":"Bearer user-token"}}},"other":true}""",
+            config.readText(),
+        )
+        config.writeText("{not json")
+        agent.unregister()
+        assertEquals("{not json", config.readText())
+    }
+
+    @Test
+    fun `junie neither replaces nor removes a manual token for the same project`() {
+        val projectDir = temp.newFolder("manual-junie")
+        val config = File(projectDir, ".junie/mcp/mcp.json").apply {
+            parentFile.mkdirs()
+            writeText("""{"mcpServers":{"datamimic-platform":{"url":"https://dm.example/mcp","headers":{"Authorization":"Bearer user-token"}}}}""")
+        }
+        val agent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null), managedServer = server("https://dm.example/mcp"))
+
+        agent.unregister()
+        assertThrows(McpAgentException::class.java) { agent.register(server("https://dm.example/mcp")) }
+
+        assertEquals(
+            """{"mcpServers":{"datamimic-platform":{"url":"https://dm.example/mcp","headers":{"Authorization":"Bearer user-token"}}}}""",
+            config.readText(),
+        )
+    }
+
+    @Test
+    fun `junie does not claim an unmarked configuration even when its credentials match`() {
+        val projectDir = temp.newFolder("previous-plugin-junie")
+        val config = File(projectDir, ".junie/mcp/mcp.json").apply {
+            parentFile.mkdirs()
+            writeText("""{"mcpServers":{"datamimic-platform":{"url":"https://dm.example/mcp","headers":{"Authorization":"Bearer token","X-DATAMIMIC-Client-Binding":"binding"}}}}""")
+        }
+        val agent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null), managedServer = server("https://dm.example/mcp"))
+
+        assertThrows(McpAgentException::class.java) { agent.register(server("https://dm.example/mcp")) }
+        agent.unregister()
+
+        assertTrue(config.exists())
+    }
+
+    @Test
+    fun `junie migrates only the exact former URL entry`() {
+        val projectDir = temp.newFolder("legacy-junie")
+        val config = File(projectDir, ".junie/mcp/mcp.json").apply {
+            parentFile.mkdirs()
+            writeText("""{"mcpServers":{"datamimic-platform":{"url":"https://dm.example/mcp"}}}""")
+        }
+
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://dm.example/mcp"))
+
+        val entry = json.parseToJsonElement(config.readText()).jsonObject.getValue("mcpServers").jsonObject.getValue(MCP_SERVER_NAME).jsonObject
+        assertEquals("Bearer token", entry.getValue("headers").jsonObject.getValue("Authorization").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `delayed cleanup does not remove a newer Junie credential`() {
+        val projectDir = temp.newFolder("renewed-junie")
+        val first = server("https://dm.example/mcp")
+        val second = McpServer(first.url, mapOf("Authorization" to "Bearer renewed", "X-DATAMIMIC-Client-Binding" to "binding"), Instant.EPOCH)
+        val oldAgent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null))
+        oldAgent.register(first)
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(second)
+
+        oldAgent.unregister()
+
+        val entry = json.parseToJsonElement(Files.readString(projectDir.toPath().resolve(JunieAgent.CONFIG_PATH)))
+            .jsonObject.getValue("mcpServers").jsonObject.getValue(MCP_SERVER_NAME).jsonObject
+        assertEquals("Bearer renewed", entry.getValue("headers").jsonObject.getValue("Authorization").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `junie refreshes after publishing and safely removing its token`() {
+        val projectDir = temp.newFolder("refresh-junie")
+        var refreshes = 0
+        val agent = JunieAgent(
+            projectDir.toPath(),
+            GitIgnore(projectDir.toPath(), git = null),
+            managedServer = server("https://dm.example/mcp"),
+            filesChanged = { refreshes++ },
+        )
+
+        agent.register(server("https://dm.example/mcp"))
+        agent.unregister()
+
+        assertEquals(2, refreshes)
     }
 
     @Test
@@ -186,10 +404,11 @@ class McpTest {
         }
 
         val exclusiveWarnings =
-            JunieAgent(exclusiveProject.toPath(), GitIgnore(exclusiveProject.toPath(), git = null)).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+            JunieAgent(exclusiveProject.toPath(), GitIgnore(exclusiveProject.toPath(), git = null)).register(server("https://x"))
 
-        assertTrue(exclusiveWarnings.single().contains(".junie/AGENTS.md overrides project rules"))
+        assertTrue(exclusiveWarnings.single().contains("add the DATAMIMIC MCP routing there manually"))
         assertEquals("user guidance\n", File(exclusiveProject, ".junie/AGENTS.md").readText())
+        assertFalse(File(exclusiveProject, JunieAgent.ROUTING_RULE_PATH).exists())
         assertTrue(File(exclusiveProject, ".junie/mcp/mcp.json").exists())
 
         val ruleProject = temp.newFolder("rule-guidance")
@@ -199,11 +418,66 @@ class McpTest {
         }
 
         val ruleWarnings =
-            JunieAgent(ruleProject.toPath(), GitIgnore(ruleProject.toPath(), git = null)).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+            JunieAgent(ruleProject.toPath(), GitIgnore(ruleProject.toPath(), git = null)).register(server("https://x"))
 
-        assertTrue(ruleWarnings.single().contains("already contains user guidance"))
+        assertTrue(ruleWarnings.any { it.contains("already contains user guidance") })
+        assertTrue(ruleWarnings.any { it.contains("user guidance was kept") })
         assertEquals("user routing\n", rule.readText())
         assertTrue(File(ruleProject, ".junie/mcp/mcp.json").exists())
+    }
+
+    @Test
+    fun `junie moves its exclusive guidance to a rule when user guidance appears`() {
+        val projectDir = temp.newFolder("migrate-exclusive-guidance")
+        val exclusive = File(projectDir, JunieAgent.EXCLUSIVE_GUIDANCE_PATH).apply {
+            parentFile.mkdirs()
+            writeText(JunieAgent.ROUTING_RULE)
+        }
+        val rootGuidance = File(projectDir, JunieAgent.ROOT_GUIDANCE_PATH).apply { writeText("user root guidance\n") }
+
+        val warnings = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://x"))
+
+        assertFalse(exclusive.exists())
+        assertEquals("user root guidance\n", rootGuidance.readText())
+        assertEquals(JunieAgent.ROUTING_RULE, File(projectDir, JunieAgent.ROUTING_RULE_PATH).readText())
+        assertTrue(warnings.any { it.contains("older Junie versions") })
+    }
+
+    @Test
+    fun `junie keeps a playbook and publishes only its compatible rule`() {
+        val projectDir = temp.newFolder("playbook-guidance")
+        val playbook = File(projectDir, JunieAgent.PLAYBOOK_PATH).apply {
+            parentFile.mkdirs()
+            writeText("user playbook\n")
+        }
+
+        val warnings = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://x"))
+
+        assertEquals("user playbook\n", playbook.readText())
+        assertFalse(File(projectDir, JunieAgent.EXCLUSIVE_GUIDANCE_PATH).exists())
+        assertEquals(JunieAgent.ROUTING_RULE, File(projectDir, JunieAgent.ROUTING_RULE_PATH).readText())
+        assertTrue(warnings.any { it.contains("older Junie versions") })
+    }
+
+    @Test
+    fun `junie leaves legacy guidelines without publishing competing guidance`() {
+        val projectDir = temp.newFolder("legacy-guidelines")
+        val legacy = File(projectDir, JunieAgent.LEGACY_GUIDELINES_PATH).apply {
+            parentFile.mkdirs()
+            writeText("legacy user guidance\n")
+        }
+        File(projectDir, JunieAgent.EXCLUSIVE_GUIDANCE_PATH).apply { writeText(JunieAgent.ROUTING_RULE) }
+        File(projectDir, JunieAgent.ROUTING_RULE_PATH).apply {
+            parentFile.mkdirs()
+            writeText(JunieAgent.ROUTING_RULE)
+        }
+
+        val warnings = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://x"))
+
+        assertEquals("legacy user guidance\n", legacy.readText())
+        assertFalse(File(projectDir, JunieAgent.EXCLUSIVE_GUIDANCE_PATH).exists())
+        assertFalse(File(projectDir, JunieAgent.ROUTING_RULE_PATH).exists())
+        assertTrue(warnings.single().contains("Legacy Junie guidelines"))
     }
 
     @Test
@@ -219,24 +493,85 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
             )
         }
 
-        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://x"))
 
-        assertTrue(rule.readText().contains("Never start data generation"))
-        assertTrue(rule.readText().contains("sign in or reconnect"))
+        val guidance = File(projectDir, JunieAgent.EXCLUSIVE_GUIDANCE_PATH)
+        assertTrue(guidance.readText().contains("Never start data generation"))
+        assertTrue(guidance.readText().contains("Commit only a Ready execution"))
+        assertTrue(guidance.readText().contains("bounded authoring dry run"))
+        assertTrue(guidance.readText().contains("sign in or reconnect"))
+        assertFalse(rule.exists())
     }
 
     @Test
-    fun `junie keeps routing guidance changed after registration`() {
+    fun `junie upgrades the immediate predecessor routing rule`() {
+        val projectDir = temp.newFolder("immediate-previous-routing")
+        val rule = File(projectDir, ".junie/rules/datamimic.md").apply {
+            parentFile.mkdirs()
+            writeText(
+                """# DATAMIMIC Platform routing
+
+For every request about this DATAMIMIC Platform project, use only the available `datamimic_*` MCP tools. Begin with an available read-only `datamimic_*` tool.
+
+Never inspect or modify DATAMIMIC project content through workspace files, local filesystem or search, terminal commands, local skills, another MCP server, or a subagent. Do not fall back when a DATAMIMIC tool is unavailable or returns an error.
+
+Never start data generation or execute the project through agent tools. Generation is an explicit user action through the IDE's DATAMIMIC Generation Run configuration or the Platform UI.
+
+If the `datamimic_*` tools are unavailable, stop and ask the user to sign in or reconnect the DATAMIMIC project.
+""",
+            )
+        }
+
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://x"))
+
+        val guidance = File(projectDir, JunieAgent.EXCLUSIVE_GUIDANCE_PATH)
+        assertTrue(guidance.readText().contains("Commit only a Ready execution"))
+        assertTrue(guidance.readText().contains("bounded authoring dry run"))
+        assertFalse(rule.exists())
+    }
+
+    @Test
+    fun `junie upgrades previous plugin guidance at the exclusive path`() {
+        val projectDir = temp.newFolder("previous-exclusive-guidance")
+        val guidance = File(projectDir, JunieAgent.EXCLUSIVE_GUIDANCE_PATH).apply {
+            parentFile.mkdirs()
+            writeText(JunieAgent.PREVIOUS_ROUTING_RULES.first())
+        }
+
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://x"))
+
+        assertEquals(JunieAgent.ROUTING_RULE, guidance.readText())
+    }
+
+    @Test
+    fun `junie migrates the compact generated rule from an earlier development build`() {
+        val projectDir = temp.newFolder("compact-generated-rule")
+        val previous = checkNotNull(JunieAgent::class.java.getResourceAsStream("/junie/datamimic-agent-workflow.md"))
+            .bufferedReader(Charsets.UTF_8)
+            .use { reader -> reader.readLines().filter(String::isNotBlank).joinToString("\n") }
+        val rule = File(projectDir, JunieAgent.ROUTING_RULE_PATH).apply {
+            parentFile.mkdirs()
+            writeText(previous)
+        }
+
+        val warnings = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://x"))
+
+        assertTrue(warnings.isEmpty())
+        assertFalse(rule.exists())
+        assertEquals(JunieAgent.ROUTING_RULE, File(projectDir, JunieAgent.EXCLUSIVE_GUIDANCE_PATH).readText())
+    }
+
+    @Test
+    fun `junie keeps exclusive guidance changed after registration`() {
         val projectDir = temp.newFolder("changed-guidance")
         val agent = JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null))
 
-        agent.register(McpServer("https://dm.example/mcp", emptyMap(), Instant.EPOCH))
-        val rule = File(projectDir, ".junie/rules/datamimic.md")
-        rule.writeText("user changed this\n")
-        agent.unregister()
+        agent.register(server("https://dm.example/mcp"))
+        val guidance = File(projectDir, JunieAgent.EXCLUSIVE_GUIDANCE_PATH)
+        guidance.writeText("user changed this\n")
 
-        assertEquals("user changed this\n", rule.readText())
-        assertFalse(File(projectDir, ".junie/mcp/mcp.json").exists())
+        assertEquals("user changed this\n", guidance.readText())
+        assertTrue(File(projectDir, ".junie/mcp/mcp.json").exists())
     }
 
     @Test
@@ -249,9 +584,9 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
         Files.createSymbolicLink(File(projectDir, ".junie/rules").toPath(), target.toPath())
 
         val warnings =
-            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://x"))
 
-        assertTrue(warnings.single().contains("symbolic link"))
+        assertTrue(warnings.any { it.contains("symbolic link") })
         assertEquals("user target\n", sentinel.readText())
         assertTrue(File(projectDir, ".junie/mcp/mcp.json").exists())
     }
@@ -264,7 +599,7 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
         Files.createSymbolicLink(File(projectDir, ".junie").toPath(), target.toPath())
 
         val error = assertThrows(McpAgentException::class.java) {
-            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(McpServer("https://x", mapOf("Authorization" to "Bearer secret"), Instant.EPOCH))
+            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://x"))
         }
 
         assertTrue(error.message!!.contains("symbolic link"))
@@ -278,10 +613,11 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
         Files.createSymbolicLink(config.toPath(), sentinel.toPath())
 
         assertThrows(McpAgentException::class.java) {
-            JunieAgent(linkedConfigProject.toPath(), GitIgnore(linkedConfigProject.toPath(), git = null)).register(McpServer("https://x", mapOf("Authorization" to "Bearer secret"), Instant.EPOCH))
+            JunieAgent(linkedConfigProject.toPath(), GitIgnore(linkedConfigProject.toPath(), git = null)).register(server("https://x"))
         }
         assertEquals("user target\n", sentinel.readText())
         assertTrue(Files.isSymbolicLink(config.toPath()))
+        assertFalse(File(linkedConfigProject, JunieAgent.ROUTING_RULE_PATH).exists())
 
         val linkedMcpProject = temp.newFolder("symlinked-mcp-directory")
         File(linkedMcpProject, ".junie").mkdirs()
@@ -289,9 +625,21 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
         Files.createSymbolicLink(File(linkedMcpProject, ".junie/mcp").toPath(), mcpTarget.toPath())
 
         assertThrows(McpAgentException::class.java) {
-            JunieAgent(linkedMcpProject.toPath(), GitIgnore(linkedMcpProject.toPath(), git = null)).register(McpServer("https://x", mapOf("Authorization" to "Bearer secret"), Instant.EPOCH))
+            JunieAgent(linkedMcpProject.toPath(), GitIgnore(linkedMcpProject.toPath(), git = null)).register(server("https://x"))
         }
         assertFalse(File(mcpTarget, "mcp.json").exists())
+        assertFalse(File(linkedMcpProject, JunieAgent.ROUTING_RULE_PATH).exists())
+
+        val linkedTempProject = temp.newFolder("symlinked-temp-directory")
+        val tempTarget = temp.newFolder("external-temp-directory")
+        File(linkedTempProject, ".junie/mcp").mkdirs()
+        Files.createSymbolicLink(File(linkedTempProject, JunieAgent.CONFIG_TEMP_DIR).toPath(), tempTarget.toPath())
+
+        assertThrows(McpAgentException::class.java) {
+            JunieAgent(linkedTempProject.toPath(), GitIgnore(linkedTempProject.toPath(), git = null)).register(server("https://x"))
+        }
+        assertFalse(File(tempTarget, "mcp.json").exists())
+        assertFalse(File(linkedTempProject, JunieAgent.ROUTING_RULE_PATH).exists())
     }
 
     @Test
@@ -302,9 +650,13 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
             writeText("/mcp/other.json\n")
         }
 
-        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(McpServer("https://dm.example/mcp", emptyMap(), Instant.EPOCH))
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git = null)).register(server("https://dm.example/mcp"))
 
-        assertEquals(listOf("/mcp/other.json", "/rules/datamimic.md", "/mcp/mcp.json"), ignore.readLines())
+        assertEquals(
+            listOf("/mcp/other.json", "/AGENTS.md", "# DATAMIMIC JetBrains MCP", "/mcp/mcp.json", "/mcp/.datamimic-tmp", "# End DATAMIMIC JetBrains MCP"),
+            ignore.readLines(),
+        )
+        assertFalse(ignore.readText().contains('*'))
         assertFalse(File(projectDir, ".git").exists())
     }
 
@@ -321,11 +673,12 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
         git(repository, "add", "nested/project/.junie/mcp/mcp.json")
 
         val error = assertThrows(McpAgentException::class.java) {
-            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), Path.of("git"))).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), Path.of("git"))).register(server("https://x"))
         }
 
         assertTrue(error.message!!.contains("tracked by Git"))
         assertEquals("{\"mcpServers\":{}}", config.readText())
+        assertFalse(File(projectDir, JunieAgent.ROUTING_RULE_PATH).exists())
     }
 
     @Test
@@ -335,12 +688,13 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
         git(repository, "init")
         val projectDir = File(repository, "nested/project").apply { mkdirs() }
 
-        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), Path.of("git"))).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), Path.of("git"))).register(server("https://x"))
 
         assertTrue(File(projectDir, ".junie/mcp/mcp.json").exists())
         assertFalse(File(projectDir, ".junie/.gitignore").exists())
         assertTrue(File(repository, ".git/info/exclude").readText().contains("/nested/project/.junie/mcp/mcp.json"))
-        assertTrue(File(repository, ".git/info/exclude").readText().contains("/nested/project/.junie/rules/datamimic.md"))
+        assertTrue(File(repository, ".git/info/exclude").readText().contains("/nested/project/.junie/mcp/.datamimic-tmp"))
+        assertTrue(File(repository, ".git/info/exclude").readText().contains("/nested/project/.junie/AGENTS.md"))
         assertEquals("", runCommand(Path.of("git"), listOf("status", "--short"), repository.toPath(), timeoutSeconds = 30).stdout.trim())
     }
 
@@ -355,10 +709,10 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
             "case \"$1\" in ls-files) exit 1 ;; rev-parse) echo '${exclude.path}' ;; esac",
         )
 
-        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git.toPath())).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+        JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git.toPath())).register(server("https://x"))
 
         assertEquals(
-            setOf("/.junie/mcp/mcp.json", "/.junie/rules/datamimic.md"),
+            setOf("/.junie/mcp/mcp.json", "/.junie/mcp/.datamimic-tmp", "/.junie/AGENTS.md"),
             exclude.readLines().filter { it.isNotBlank() }.toSet(),
         )
     }
@@ -372,7 +726,7 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
         val git = script("git", "echo 'index unavailable' >&2; exit 2")
 
         val error = assertThrows(McpAgentException::class.java) {
-            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git.toPath())).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git.toPath())).register(server("https://x"))
         }
 
         assertTrue(error.message!!.contains("cannot determine"))
@@ -381,7 +735,7 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
     }
 
     @Test
-    fun `no token is written into a junie config that git tracks`() {
+    fun `a junie config tracked by git is left unchanged`() {
         assumeFalse(isWindows())
         val projectDir = temp.newFolder("tracked").apply {
             File(this, ".git").mkdirs()
@@ -390,7 +744,7 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
         val git = script("git", "exit 0")
 
         val error = assertThrows(McpAgentException::class.java) {
-            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git.toPath())).register(McpServer("https://x", emptyMap(), Instant.EPOCH))
+            JunieAgent(projectDir.toPath(), GitIgnore(projectDir.toPath(), git.toPath())).register(server("https://x"))
         }
         assertTrue(error.message!!.contains("tracked by Git"))
         assertFalse(File(projectDir, ".junie/mcp/mcp.json").exists())
@@ -400,6 +754,12 @@ For DATAMIMIC Platform project content, use only `datamimic_*` MCP tools. Begin 
         writeText("#!/bin/sh\n$body\n")
         setExecutable(true)
     }
+
+    private fun server(url: String) = McpServer(
+        url,
+        mapOf("Authorization" to "Bearer token", "X-DATAMIMIC-Client-Binding" to "binding"),
+        Instant.EPOCH,
+    )
 
     private fun gitAvailable() = runCatching { runCommand(Path.of("git"), listOf("--version"), timeoutSeconds = 30).succeeded }.getOrDefault(false)
 

@@ -39,6 +39,8 @@ class ProjectToken(val name: String, val secret: String, val expiresAt: Instant)
 
 /** Project access tokens: besides its own OAuth, the only credential the platform MCP server accepts. */
 class ProjectTokensApi(private val http: PlatformHttp) {
+    fun boundTo(origin: PlatformOrigin) = ProjectTokensApi(http.boundTo(origin))
+
     fun list(projectId: String): List<ProjectToken> =
         json.decodeFromString(ListSerializer(ProjectTokenResponse.serializer()), http.getJson(base(projectId))).map(::toToken)
 
@@ -74,7 +76,7 @@ data class McpServer(val url: String, val headers: Map<String, String>, val expi
 
 /**
  * Hands IDE agents the platform MCP server of a project. The session cookie is not accepted there, so agents get a
- * short-lived project token: one per IDE product and project, shared by all windows and agents of that IDE.
+ * short-lived project token: one per IDE process and project, shared by all windows and agents in that process.
  */
 class McpAccess(
     private val tokens: ProjectTokensApi,
@@ -84,7 +86,7 @@ class McpAccess(
 ) {
     /** Blocking; call off the UI thread. */
     fun server(origin: PlatformOrigin, projectId: String): McpServer {
-        val token = usableToken(projectId, tokenName(origin, projectId))
+        val token = usableToken(tokens.boundTo(origin), projectId, tokenName(origin, projectId))
         return McpServer(
             url = "${origin.value}/api/v2/mcp/projects/${encode(projectId)}",
             headers = mapOf(
@@ -100,13 +102,19 @@ class McpAccess(
     fun renewalDue(server: McpServer): Instant = server.expiresAt.minus(MIN_REMAINING)
 
     /** Blocking; call off the UI thread. Only when no window of this IDE uses the project's MCP server anymore. */
-    fun revoke(origin: PlatformOrigin, projectId: String) = tokens.delete(projectId, tokenName(origin, projectId))
+    fun revoke(origin: PlatformOrigin, projectId: String) {
+        val baseName = tokenName(origin, projectId)
+        val boundTokens = tokens.boundTo(origin)
+        boundTokens.list(projectId).filter { ownsToken(it.name, baseName) }.forEach { boundTokens.delete(projectId, it.name) }
+    }
 
-    private fun usableToken(projectId: String, name: String): ProjectToken {
+    private fun usableToken(tokens: ProjectTokensApi, projectId: String, baseName: String): ProjectToken {
         val now = clock.instant()
-        val existing = tokens.list(projectId).firstOrNull { it.name == name }
-        if (existing != null && existing.expiresAt.isAfter(now.plus(MIN_REMAINING))) return existing
-        if (existing != null) tokens.delete(projectId, name)
+        val existing = tokens.list(projectId).filter { ownsToken(it.name, baseName) }
+        existing.maxByOrNull(ProjectToken::expiresAt)?.takeIf { it.expiresAt.isAfter(now.plus(MIN_REMAINING)) }?.let { return it }
+        // WHY: another open window may still point at it; expire it naturally after the replacement is published.
+        existing.filter { !it.expiresAt.isAfter(now) }.forEach { tokens.delete(projectId, it.name) }
+        val name = "$baseName-${now.epochSecond}"
         return try {
             tokens.create(projectId, name, now.plus(LIFETIME))
         } catch (e: PlatformException) {
@@ -116,7 +124,11 @@ class McpAccess(
         }
     }
 
-    private fun tokenName(origin: PlatformOrigin, projectId: String) = "dm-mcp-jb-" + digest("$productCode|${origin.value}|$projectId").take(40)
+    private fun ownsToken(name: String, baseName: String) =
+        name == baseName || name.matches(Regex("${Regex.escape(baseName)}-\\d+"))
+
+    private fun tokenName(origin: PlatformOrigin, projectId: String) =
+        "dm-mcp-jb-" + digest("$productCode|${origin.value}|$projectId|$clientBindingId").take(40)
 
     private fun agentBinding(projectId: String) = "dm-agent-" + digest("$clientBindingId|$projectId").take(32)
 
