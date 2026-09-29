@@ -17,10 +17,15 @@ import com.rapiddweller.datamimic.core.PlatformHttp
 import com.rapiddweller.datamimic.core.SessionService
 import com.rapiddweller.datamimic.core.generation.GenerationApi
 import com.rapiddweller.datamimic.core.generation.GenerationRun
+import com.rapiddweller.datamimic.core.workspace.FolderIdentity
+import com.rapiddweller.datamimic.ide.AuthState
+import com.rapiddweller.datamimic.ide.DatamimicPlatform
+import com.rapiddweller.datamimic.ide.LoginInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import java.awt.Component
@@ -30,6 +35,7 @@ import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComboBox
+import javax.swing.JLabel
 
 class RunResultsTest : BasePlatformTestCase() {
     fun `test artifact publication holds the unsaved check in the IDE write action`() {
@@ -97,7 +103,7 @@ class RunResultsTest : BasePlatformTestCase() {
         assertTrue(followed.get())
     }
 
-    fun `test empty terminal preview is rendered unavailable`() {
+    fun `test native result renders empty preview and artifacts`() {
         val platform = FakePlatform()
         val client = HttpClient.newHttpClient()
         val scope = CoroutineScope(SupervisorJob())
@@ -128,7 +134,7 @@ class RunResultsTest : BasePlatformTestCase() {
                 val preview = checkNotNull(tabbedPane(checkNotNull(console)))
                 val previewComponent = preview.getComponentAt(preview.indexOfTab("Preview"))
                 assertTrue(textArea(previewComponent)?.text == "Preview unavailable.")
-                assertTrue(preview.indexOfTab("Artifacts") < 0)
+                assertTrue(preview.indexOfTab("Artifacts") >= 0)
             }
         } finally {
             console?.let { runInEdtAndWait(it::dispose) }
@@ -211,6 +217,48 @@ class RunResultsTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test history failure replaces the loading message in both panes`() {
+        val platform = FakePlatform()
+        val scope = CoroutineScope(SupervisorJob())
+        val service = DatamimicPlatform.getInstance()
+        var view: GenerationTasksView? = null
+        try {
+            PlatformTestUtil.waitWithEventsDispatching("platform state stayed unknown", { service.state.value != AuthState.Unknown }, 5)
+            platform.generationHistoryStatus = 422
+            platform.generationHistoryResponse = """{
+                "detail":"Request validation failed",
+                "code":"VALIDATION_ERROR",
+                "errors":[{"loc":["body","filters","future_filter"],"msg":"Extra inputs are not permitted"}]
+            }"""
+            service.signIn(LoginInput(platform.origin, "ada@example.com", "secret", false))
+            runInEdtAndWait {
+                view = GenerationTasksView(project, scope).also {
+                    it.show(FolderIdentity(platform.origin, "p1", "Payments"))
+                }
+            }
+
+            val ready = AtomicBoolean()
+            PlatformTestUtil.waitWithEventsDispatching("history error was not shown", {
+                runInEdtAndWait {
+                    val messages = labels(checkNotNull(view)).map(JLabel::getText)
+                    ready.set(messages.count { it.startsWith("Tasks unavailable: Request validation failed") } == 2)
+                }
+                ready.get()
+            }, 5)
+
+            runInEdtAndWait {
+                val messages = labels(checkNotNull(view)).map(JLabel::getText)
+                assertEquals(2, messages.count { it.contains("filters.future_filter: Extra inputs are not permitted") })
+                assertTrue(messages.none { it == "Loading tasks…" })
+            }
+        } finally {
+            view?.let { runInEdtAndWait(it::dispose) }
+            runCatching(service::signOut)
+            scope.cancel()
+            platform.close()
+        }
+    }
+
     private fun lines(count: Int) = (1..count).joinToString("\n") { "line $it" }
 
     private fun tabbedPane(component: Component): JBTabbedPane? = when (component) {
@@ -229,5 +277,11 @@ class RunResultsTest : BasePlatformTestCase() {
         is JComboBox<*> -> component
         is Container -> component.components.firstNotNullOfOrNull(::comboBox)
         else -> null
+    }
+
+    private fun labels(component: Component): List<JLabel> = when (component) {
+        is JLabel -> listOf(component)
+        is Container -> component.components.flatMap(::labels)
+        else -> emptyList()
     }
 }

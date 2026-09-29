@@ -41,9 +41,11 @@ class AgentDiscoveryTest {
         val config = json.parseToJsonElement(Files.readString(projectDir.resolve(".junie/mcp/mcp.json"))).jsonObject
         assertEquals("https://dm.example/mcp", config.getValue("mcpServers").jsonObject.getValue("datamimic-platform").jsonObject.getValue("url").jsonPrimitive.content)
         val rule = Files.readString(projectDir.resolve(".junie/rules/datamimic.md"))
-        assertTrue(rule.contains("only `datamimic_*` MCP tools"))
+        assertTrue(rule.contains("only the available `datamimic_*` MCP tools"))
         assertTrue(rule.contains("Begin with an available read-only `datamimic_*` tool"))
-        assertTrue(rule.contains("stop and report"))
-        assertTrue(rule.contains("Do not fall back to local files"))
+        assertTrue(rule.contains("Never inspect or modify DATAMIMIC project content"))
+        assertTrue(rule.contains("Never start data generation"))
+        assertTrue(rule.contains("explicit user action"))
+        assertTrue(rule.contains("stop and ask the user to sign in or reconnect"))
     }
 }

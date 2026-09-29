@@ -35,6 +35,7 @@ class FakePlatform : AutoCloseable {
     var generationLogCompleted = false
     var generationPreview = "{\"preview\":[]}"
     var generationSearchResponse: String? = null
+    var generationHistoryStatus = 200
     var generationHistoryResponse = """{"data":[],"meta":{"pagination":{"current_page":1,"total_pages":0}}}"""
     var failingGenerationLogReads = 0
     var failingGenerationPreviewReads = 0
@@ -273,7 +274,7 @@ class FakePlatform : AutoCloseable {
                 generationStatusReads++
                 generationSearchResponse ?: """{"data":[{"task_id":"generation-1","status":"$generationStatus"}]}"""
             }
-            exchange.respond(200, response)
+            exchange.respond(if ("\"routing_keys\"" in body) generationHistoryStatus else 200, response)
         }
         authenticated("/api/v2/projects/p1/tasks/generation-1/logs") { exchange ->
             generationLogReads++

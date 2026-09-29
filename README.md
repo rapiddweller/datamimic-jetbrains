@@ -42,7 +42,9 @@ generation runs, and MCP access for IDE agents.
 
 The plugin adds `.junie/rules/datamimic.md` for a connected DATAMIMIC project. It routes DATAMIMIC Platform project
 requests to a read-only `datamimic_*` MCP tool first and forbids a fallback to local project content when those tools
-are unavailable. The detailed workflow stays in Platform `MCP_SERVER_INSTRUCTIONS`.
+are unavailable or fail. It also prevents delegation and agent-started data generation; generation remains an explicit
+user action through the IDE's **DATAMIMIC Generation** Run Configuration or the Platform UI. The detailed authoring
+workflow stays in Platform `MCP_SERVER_INSTRUCTIONS`.
 
 Junie must use its default Guidelines path. A custom Guidelines path bypasses project rules and cannot be detected
 through a stable public JetBrains API; clear that setting or include the same routing manually. An existing

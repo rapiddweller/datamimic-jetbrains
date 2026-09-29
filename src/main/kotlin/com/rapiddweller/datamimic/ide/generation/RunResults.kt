@@ -199,7 +199,7 @@ private class GenerationTaskRenderer : JPanel(GridLayout(2, 1)), ListCellRendere
     }
 }
 
-private class GenerationTasksView(private val project: Project, parentScope: CoroutineScope) : JPanel(BorderLayout()), Disposable {
+internal class GenerationTasksView(private val project: Project, parentScope: CoroutineScope) : JPanel(BorderLayout()), Disposable {
     private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext.job))
     private val tasks = DefaultListModel<GenerationTask>()
     private val list = JList(tasks).apply { cellRenderer = GenerationTaskRenderer() }
@@ -340,10 +340,7 @@ private class GenerationTasksView(private val project: Project, parentScope: Cor
         detail?.dispose()
         detail = null
         list.clearSelection()
-        details.removeAll()
-        details.add(JLabel("Select a task."), BorderLayout.CENTER)
-        details.revalidate()
-        details.repaint()
+        showDetails("Select a task.")
     }
 
     private fun clear(message: String) {
@@ -359,10 +356,7 @@ private class GenerationTasksView(private val project: Project, parentScope: Cor
         taskState.text = message
         refresh.isEnabled = false
         updatePaging(1, 0)
-        details.removeAll()
-        details.add(JLabel(message), BorderLayout.CENTER)
-        details.revalidate()
-        details.repaint()
+        showDetails(message)
     }
 
     private fun load(target: GenerationBinding, requestedPage: Int) {
@@ -385,13 +379,15 @@ private class GenerationTasksView(private val project: Project, parentScope: Cor
                 selectedTaskId?.let { selected ->
                     val index = result.tasks.indexOfFirst { it.taskId == selected }
                     if (index >= 0) list.selectedIndex = index
-                }
+                } ?: showDetails(if (result.tasks.isEmpty()) "No generation tasks." else "Select a task.")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (binding != target || !authAllows(target) || historyRequest != request) return@launch
                 tasks.removeAllElements()
-                taskState.text = "Tasks unavailable: ${e.message ?: e.javaClass.simpleName}"
+                val message = "Tasks unavailable: ${e.message ?: e.javaClass.simpleName}"
+                taskState.text = message
+                showDetails(message)
                 updatePaging(requestedPage, 0)
             } finally {
                 if (binding == target && authAllows(target) && historyRequest == request) refresh.isEnabled = true
@@ -402,6 +398,13 @@ private class GenerationTasksView(private val project: Project, parentScope: Cor
     private fun updatePaging(currentPage: Int, totalPages: Int) {
         previous.isEnabled = currentPage > 1
         next.isEnabled = totalPages > currentPage
+    }
+
+    private fun showDetails(message: String) {
+        details.removeAll()
+        details.add(JLabel(message), BorderLayout.CENTER)
+        details.revalidate()
+        details.repaint()
     }
 
     private fun authAllows(target: GenerationBinding): Boolean = DatamimicPlatform.getInstance().state.value == target.auth
@@ -827,7 +830,7 @@ internal class NativeGenerationConsole(
             dispose()
             return false
         }
-        val result = RunResultView(projectName, run, scope, handler::requestStop, handler::completed, ::dispose)
+        val result = RunResultView(projectName, run, scope, handler::requestStop, handler::completed, ::dispose, artifactProject = project)
         view = result
         removeAll()
         add(result, BorderLayout.CENTER)
