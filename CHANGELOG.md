@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fixed: the language server connects again on its own after a network change or sleep. The status bar shows *reconnecting* meanwhile.
+
 ## [0.5.0]
 
 Generation history, previews, and artifacts are now first-class IDE workflows, with automatic project-scoped Junie

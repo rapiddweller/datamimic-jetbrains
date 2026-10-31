@@ -72,7 +72,7 @@ private class LspStatusWidget(private val project: Project, private val scope: C
 
     private fun actions() = DefaultActionGroup(
         action("Turn On for This Project", { it == LspStatus.TURNED_OFF || it == LspStatus.FAILED }) { server.turnOn() },
-        action("Turn Off for This Project", { it == LspStatus.READY || it == LspStatus.CONNECTED }) { confirmTurnOff() },
+        action("Turn Off for This Project", { it == LspStatus.READY || it == LspStatus.CONNECTED || it == LspStatus.RECONNECTING }) { confirmTurnOff() },
         action("Check Again", { it != LspStatus.SIGNED_OUT }) { server.checkAgain() },
     )
 
@@ -105,6 +105,7 @@ private class LspStatusWidget(private val project: Project, private val scope: C
         LspStatus.TURNED_OFF -> "off"
         LspStatus.READY -> "ready"
         LspStatus.CONNECTED -> "connected"
+        LspStatus.RECONNECTING -> "reconnecting…"
         LspStatus.FAILED -> "error"
     }
 

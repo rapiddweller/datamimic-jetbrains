@@ -187,6 +187,20 @@ class HostedLspTest {
     }
 
     @Test
+    fun `a handshake that fails for another reason is reported as a lost link, not as a refusal`() {
+        upstream.refuseWith = 503
+        upstream.serve()
+        Socket(InetAddress.getLoopbackAddress(), bridge.port).use { ide ->
+            ide.soTimeout = 5_000
+            ide.getOutputStream().write(framed(initialize(bridge.secret)))
+
+            assertEquals(-1, ide.getInputStream().read())
+            assertEquals(LspLink.CLOSED, links.poll(5, TimeUnit.SECONDS))
+            assertFalse(rejected.await(300, TimeUnit.MILLISECONDS))
+        }
+    }
+
+    @Test
     fun `framing counts bytes, not characters`() {
         val message = """{"text":"äöü €"}"""
         assertEquals(message, readMessage(framed(message).inputStream()))

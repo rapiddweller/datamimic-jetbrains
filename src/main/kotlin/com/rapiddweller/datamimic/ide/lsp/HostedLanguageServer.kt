@@ -29,6 +29,7 @@ import com.rapiddweller.datamimic.core.lsp.DocumentUris
 import com.rapiddweller.datamimic.core.lsp.LspBridge
 import com.rapiddweller.datamimic.core.lsp.LspInit
 import com.rapiddweller.datamimic.core.lsp.LspLink
+import com.rapiddweller.datamimic.core.lsp.Reconnector
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import com.rapiddweller.datamimic.ide.AuthState
@@ -59,6 +60,9 @@ enum class LspStatus {
     /** Ready; the IDE connects once an XML file of the folder is open. */
     READY,
     CONNECTED,
+
+    /** The connection was lost; a new one is tried after a short wait. */
+    RECONNECTING,
     FAILED,
 }
 
@@ -77,6 +81,8 @@ class HostedLanguageServer(private val project: Project, private val scope: Coro
     @Volatile
     private var descriptor: HostedLspDescriptor? = null
 
+    private val reconnector = Reconnector(scope) { connect() }
+
     init {
         LOG.info("Language server support started for ${project.basePath}")
         scope.launch {
@@ -85,6 +91,7 @@ class HostedLanguageServer(private val project: Project, private val scope: Coro
                 when (auth) {
                     is AuthState.SignedIn -> connect()
                     is AuthState.SignedOut -> {
+                        reconnector.stop()
                         disconnect()
                         stateFlow.value = LspState(LspStatus.SIGNED_OUT)
                     }
@@ -109,12 +116,14 @@ class HostedLanguageServer(private val project: Project, private val scope: Coro
 
     /** Asks the platform again, e.g. after the server was turned on elsewhere. */
     fun checkAgain() {
+        reconnector.stop()
         scope.launch { connect() }
     }
 
     /** Turns the server on for everyone in the project, as the platform UI and VS Code do, and connects once it is on. */
     fun turnOn() {
         val target = target() ?: return
+        reconnector.stop()
         scope.launch {
             if (!setEnabled(target.identity, true)) return@launch
             stateFlow.value = LspState(LspStatus.STARTING, "Waiting for the platform to report it on.")
@@ -132,6 +141,7 @@ class HostedLanguageServer(private val project: Project, private val scope: Coro
     /** Turns the server off for everyone in the project. */
     fun turnOff() {
         val target = target() ?: return
+        reconnector.stop()
         scope.launch {
             if (!setEnabled(target.identity, false)) return@launch
             disconnect()
@@ -170,17 +180,24 @@ class HostedLanguageServer(private val project: Project, private val scope: Coro
             throw e
         } catch (e: Exception) {
             LOG.info("Language server start failed for $projectId: $e")
-            stateFlow.value = if (e is PlatformException && e.code == PlatformErrorCode.LSP_DISABLED) {
-                LspState(LspStatus.TURNED_OFF, "Turned off for ${target.identity.projectName} on the platform.")
+            val reason = e.message ?: e.javaClass.simpleName
+            if (e is PlatformException && e.code == PlatformErrorCode.LSP_DISABLED) {
+                reconnector.reset()
+                stateFlow.value = LspState(LspStatus.TURNED_OFF, "Turned off for ${target.identity.projectName} on the platform.")
+            } else if (reconnector.retrying) {
+                stateFlow.value = LspState(LspStatus.RECONNECTING, "$reason Trying again.")
+                reconnector.retry()
             } else {
-                LspState(LspStatus.FAILED, e.message ?: e.javaClass.simpleName)
+                stateFlow.value = LspState(LspStatus.FAILED, reason)
             }
             return stateFlow.value.status
         }
-        val bridge = platform.lspBridge(
+        // WHY: closing the previous bridge reports its link as closed, late; only the current bridge may speak.
+        lateinit var bridge: LspBridge
+        bridge = platform.lspBridge(
             projectId,
-            onRejected = { scope.launch { rejected() } },
-            onLink = ::linkChanged,
+            onRejected = { if (descriptor?.bridge === bridge) scope.launch { rejected() } },
+            onLink = { link -> linkChanged(bridge, link) },
             log = LOG::info,
         )
         descriptor = HostedLspDescriptor(project, projectId, target.folder, init, bridge)
@@ -190,13 +207,23 @@ class HostedLanguageServer(private val project: Project, private val scope: Coro
         return LspStatus.READY
     }
 
-    private fun linkChanged(link: LspLink) {
-        if (descriptor == null) return
-        stateFlow.value = LspState(if (link == LspLink.OPEN) LspStatus.CONNECTED else LspStatus.READY)
+    private fun linkChanged(bridge: LspBridge, link: LspLink) {
+        if (descriptor?.bridge !== bridge) return
+        when (link) {
+            LspLink.OPEN -> {
+                reconnector.reset()
+                stateFlow.value = LspState(LspStatus.CONNECTED)
+            }
+            LspLink.CLOSED -> {
+                stateFlow.value = LspState(LspStatus.RECONNECTING, "The connection was lost. Trying again.")
+                reconnector.retry()
+            }
+        }
     }
 
     /** The platform refused the connection; restarting on our own would only be refused again. */
     private suspend fun rejected() {
+        reconnector.stop()
         disconnect()
         stateFlow.value = LspState(LspStatus.FAILED, "The platform refused the connection: turned off for this project, or access denied.")
     }
