@@ -28,12 +28,19 @@ typealias CreatedFiles = List<CreatedFile>
  *   file fails, the file has `local = null`. The caller tells the user, because a retry meets HTTP 412.
  * - A cancellation always propagates, also after the platform call.
  */
-suspend fun createFile(request: CreationRequest, api: WorkspaceApi, session: WorkspaceSession): CreatedFiles {
-    val paths = withContext(Dispatchers.IO) {
+suspend fun createFile(request: CreationRequest, api: WorkspaceApi, session: WorkspaceSession): CreatedFiles =
+    pullCreated(createOnPlatform(request, api, session), session)
+
+/** The platform call alone. A caller that wants a different progress for the pull runs [pullCreated] afterwards. */
+suspend fun createOnPlatform(request: CreationRequest, api: WorkspaceApi, session: WorkspaceSession): List<String> =
+    withContext(Dispatchers.IO) {
         when (request) {
             is CreationRequest.FromTemplate -> listOf(api.createFromTemplate(session.projectId, request.dir, request.name, request.extension))
         }
     }
+
+/** Pulls files that the platform created into the local folder. It never throws, except for a cancellation. */
+suspend fun pullCreated(paths: List<String>, session: WorkspaceSession): CreatedFiles {
     try {
         withContext(Dispatchers.IO) { session.refreshTree() }
         session.sync.syncNow()

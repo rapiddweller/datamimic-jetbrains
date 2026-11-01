@@ -19,7 +19,9 @@ import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.withModalProgress
 import com.rapiddweller.datamimic.core.PlatformException
 import com.rapiddweller.datamimic.core.creation.container.templateFlows
-import com.rapiddweller.datamimic.core.creation.street.createFile
+import com.rapiddweller.datamimic.core.creation.street.CreatedFile
+import com.rapiddweller.datamimic.core.creation.street.createOnPlatform
+import com.rapiddweller.datamimic.core.creation.street.pullCreated
 import com.rapiddweller.datamimic.core.creation.street.targetPaths
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.ide.ActiveProject
@@ -32,6 +34,8 @@ import com.rapiddweller.datamimic.ide.platformTargetError
 import com.rapiddweller.datamimic.ide.toNioPathOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -89,21 +93,32 @@ private suspend fun create(project: Project, identity: FolderIdentity, dir: Stri
     var dialog = CreationDialog(project, flows, dir)
     while (dialog.showAndGet()) {
         val request = dialog.flow.toRequest(dir, dialog.fileName)
-        val created = try {
-            // WHY: the user can sign out or sign in to another platform while the dialog is open.
-            val session = platformSession(project, identity)
+        // WHY: the user can sign out or sign in to another platform while the dialog is open.
+        val session = try {
+            platformSession(project, identity)
+        } catch (e: IllegalStateException) {
+            return fail(project, "Cannot Create File", e)
+        }
+        val paths = try {
             // WHY: no cancel button, because a cancel cannot stop a create that the platform already received.
             withModalProgress(owner, "Creating ${request.targetPaths().joinToString()}", Cancellation.nonCancellable()) {
-                createFile(request, platform.workspace, session)
+                createOnPlatform(request, platform.workspace, session)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: PlatformException) {
             if (e.status !in 400..499) return fail(project, "Cannot Create File", e)
-            dialog = CreationDialog(project, flows, dir, dialog.flow.id, dialog.fileName, e.message)
+            dialog = CreationDialog(project, flows, dir, dialog.flow.id, dialog.fileName, e.detail)
             continue
         } catch (e: Exception) {
             return fail(project, "Cannot Create File", e)
+        }
+        val created = try {
+            withModalProgress(owner, "Syncing ${paths.joinToString()}", Cancellation.cancellable()) { pullCreated(paths, session) }
+        } catch (e: CancellationException) {
+            // WHY: Cancel here stops only the wait. The file exists on the platform and the sync goes on.
+            currentCoroutineContext().ensureActive()
+            paths.map { CreatedFile(it, null) }
         }
         for (file in created) {
             val local = file.local

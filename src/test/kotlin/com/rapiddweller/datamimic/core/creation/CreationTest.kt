@@ -13,6 +13,8 @@ import com.rapiddweller.datamimic.core.creation.container.templateFlows
 import com.rapiddweller.datamimic.core.creation.street.CreatedFile
 import com.rapiddweller.datamimic.core.creation.street.CreationRequest
 import com.rapiddweller.datamimic.core.creation.street.createFile
+import com.rapiddweller.datamimic.core.creation.street.createOnPlatform
+import com.rapiddweller.datamimic.core.creation.street.pullCreated
 import com.rapiddweller.datamimic.core.creation.street.nameProblem
 import com.rapiddweller.datamimic.core.creation.street.targetPaths
 import com.rapiddweller.datamimic.core.workspace.FileTemplate
@@ -104,6 +106,18 @@ class CreationTest {
 
         assertEquals(folder.root.resolve(path), created.single().local)
         assertNotEquals(StreamState.LIVE, session.streamState)
+    }
+
+    @Test
+    fun `the platform call and the pull can run as two steps`() {
+        val paths = runBlocking { createOnPlatform(customers, api, session) }
+
+        assertEquals(listOf(path), paths)
+        assertFalse(Files.exists(folder.root.resolve(path)))
+
+        val pulled = runBlocking { pullCreated(paths, session) }
+
+        assertEquals(listOf(CreatedFile(path, folder.root.resolve(path))), pulled)
     }
 
     @Test
