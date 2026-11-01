@@ -89,6 +89,9 @@ class FakePlatform : AutoCloseable {
     @Volatile var failingUploads = 0
     @Volatile var uploadFailureStatus = 503
 
+    /** Every read of these files fails with 500. */
+    val failingReads: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     /** When set, an acquire waits here before it is processed. */
     var acquireGate: CountDownLatch? = null
 
@@ -169,6 +172,7 @@ class FakePlatform : AutoCloseable {
             when (exchange.requestMethod) {
                 "GET" -> {
                     if (current == null) return@authenticated exchange.error(404, "NOT_FOUND", "missing")
+                    if (path in failingReads) return@authenticated exchange.error(500, "INTERNAL_SERVER_ERROR", "Read temporarily unavailable")
                     exchange.responseHeaders.add("ETag", current.second)
                     exchange.respond(200, Base64.getEncoder().encodeToString(current.first.toByteArray()))
                 }
