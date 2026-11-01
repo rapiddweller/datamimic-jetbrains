@@ -213,7 +213,7 @@ class CreationTest {
     }
 
     @Test
-    fun `a name that would replace the source file is refused, and the initial name avoids it`() {
+    fun `a name that replaces the source file is refused, and the initial name avoids it`() {
         val xml = uploadFlows("/data/customers.xml")
 
         assertEquals(listOf("customers-model", "customers-model"), xml.map { it.initialName })

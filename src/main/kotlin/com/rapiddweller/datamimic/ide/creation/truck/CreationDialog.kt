@@ -116,7 +116,7 @@ class CreationDialog(
     }
 
     private fun updatePreview() {
-        // WHY: a blank text collapses the row, so the dialog would change its height while the user types.
+        // WHY: a blank text collapses the row. The dialog then changes its height while the user types.
         preview.text = if (flow.nameProblem(fileName) != null) " " else "Creates " + flow.toRequest(dir, fileName, choices).targetPaths().joinToString(", ")
     }
 }

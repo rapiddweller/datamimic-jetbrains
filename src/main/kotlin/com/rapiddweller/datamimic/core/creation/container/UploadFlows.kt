@@ -65,11 +65,11 @@ private class UploadFlow(
     override val choices = if (withMode) listOf(GENERATION_MODE) else emptyList()
     private val sourceName = source.substringAfterLast('/').substringAfterLast('\\')
 
-    // WHY: an XML source such as customers.xml would get the model customers.xml, and the platform would replace the source.
+    // WHY: the model name matches the XML source name (customers.xml). The platform then replaces the source.
     override val initialName = if (replacesSource(stem)) "$stem-model" else stem
 
     override fun nameProblem(name: String): String? =
-        uploadNameProblem(name) ?: if (replacesSource(name)) "This name would replace the source file $sourceName." else null
+        uploadNameProblem(name) ?: if (replacesSource(name)) "This name replaces the source file $sourceName." else null
 
     private fun replacesSource(name: String) = listOfNotNull(MODEL, template).any { (name + it).equals(sourceName, ignoreCase = true) }
 
