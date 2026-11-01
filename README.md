@@ -27,11 +27,15 @@ generation runs, and MCP access for IDE agents.
   (`.junie/mcp/mcp.json` plus a project-local routing rule). The plugin creates and renews a short-lived project access
   token from the existing platform session. AI Assistant is off by default; enable **Settings | Tools | DATAMIMIC** to
   publish its project-scoped `.ai/mcp/mcp.json` entry.
+- *New > DATAMIMIC File…* in the Project view creates a file from one of the platform's templates (entity data,
+  weighting, scripts, templates, and more) with example content. The platform lists the file types
+  ([ADR 0006](docs/adr/0006-file-creation-wizard.md)).
 - Server-side edit locks: showing a file takes its lock, a banner explains when someone else holds it, and
   *Take over…* overrides it after confirmation.
 - Completion and checks for the folder's XML files from the platform's language server
   ([ADR 0004](docs/adr/0004-hosted-language-server.md)). The status bar shows *DATAMIMIC LSP: connected / ready / off /
-  error*; click it to turn the server on or off for the project, or to check again. Requires JetBrains 2025.2.1+.
+  error*; click it to turn the server on or off for the project, or to check again. After a network change or sleep it
+  connects again on its own. Requires JetBrains 2025.2.1+.
 - Generate from the project window or a native **DATAMIMIC Generation** Run Configuration. The configuration is local,
   keeps only the platform/project identity and task type, and validates that the opened folder is connected before it
   runs. Each run shows platform status, logs, refresh errors, and preview samples when available; **Stop** requests
