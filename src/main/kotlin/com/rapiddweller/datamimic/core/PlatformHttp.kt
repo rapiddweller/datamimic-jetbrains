@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -85,7 +86,8 @@ sealed interface RequestBody {
 
     data class Form(val fields: Map<String, String>) : RequestBody
 
-    class Multipart(val fileName: String, val bytes: ByteArray) : RequestBody
+    /** The text [fields] go first, then the file part named `file`. */
+    class Multipart(val fileName: String, val bytes: ByteArray, val fields: Map<String, String> = emptyMap()) : RequestBody
 }
 
 /** Error codes the client reacts to. Anything else decodes as [UNKNOWN]. */
@@ -101,6 +103,7 @@ enum class PlatformErrorCode {
     FILE_LOCK_OWNED_BY_OTHER,
     FILE_LOCK_SUPERSEDED,
     LSP_DISABLED,
+    UPLOAD_GENERATE_ALREADY_RUNNING,
     UNKNOWN,
 }
 
@@ -124,6 +127,11 @@ private data class PlatformErrorBody(
 /** [detail] is the platform's own text; [message] adds the request for logs. */
 class PlatformException(val status: Int, val code: PlatformErrorCode, val detail: String, message: String = detail) : RuntimeException(message)
 
+/** Whether the same platform call can work later: no network, or a platform that is down. A 4xx answer does not change. */
+internal fun Exception.isTransient(): Boolean = this is IOException || (this is PlatformException && status >= SERVER_ERROR)
+
+private const val SERVER_ERROR = 500
+
 class SessionExpiredException : RuntimeException("Your DATAMIMIC session has ended. Sign in again.")
 
 class PlatformResponse(val status: Int, val body: String, private val headers: java.net.http.HttpHeaders) {
@@ -139,6 +147,9 @@ internal class PlatformSessionFence(private val sessions: SessionService, privat
 }
 
 internal val DOWNLOAD_TIMEOUT: Duration = Duration.ofMinutes(10)
+
+// WHY: an upload task can take 100 MB, and 60 s is too short on a slow link. File saves (PUT) keep their own timeout.
+private val UPLOAD_TIMEOUT: Duration = Duration.ofMinutes(5)
 
 /** Authenticated transport of one IDE process: session cookie, platform Origin and client binding on every request. */
 class PlatformHttp(
@@ -231,7 +242,7 @@ internal fun HttpClient.sendPlatformRequest(
     headers: Map<PlatformHeader, String>,
 ): PlatformResponse {
     val builder = HttpRequest.newBuilder(URI(origin.value + path))
-        .timeout(method.timeout)
+        .timeout(if (body is RequestBody.Multipart && method == HttpMethod.POST) UPLOAD_TIMEOUT else method.timeout)
         .header(PlatformHeader.ORIGIN.wireName, origin.value)
     headers.forEach { (name, value) -> builder.header(name.wireName, value) }
     val publisher = when (body) {
@@ -267,7 +278,10 @@ internal fun encode(value: String): String = URLEncoder.encode(value, UTF_8)
 internal fun encodePath(path: String): String = path.split("/").joinToString("/") { encode(it).replace("+", "%20") }
 
 private fun multipart(boundary: String, body: RequestBody.Multipart): ByteArray {
-    val head = "--$boundary\r\n" +
+    val fields = body.fields.entries.joinToString("") { (name, value) ->
+        "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n"
+    }
+    val head = fields + "--$boundary\r\n" +
         "Content-Disposition: form-data; name=\"file\"; filename=\"${body.fileName.replace("\"", "")}\"\r\n" +
         "Content-Type: application/octet-stream\r\n\r\n"
     return head.toByteArray(UTF_8) + body.bytes + "\r\n--$boundary--\r\n".toByteArray(UTF_8)

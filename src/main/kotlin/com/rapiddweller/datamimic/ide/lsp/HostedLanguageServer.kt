@@ -25,12 +25,12 @@ import com.intellij.platform.lsp.api.LspServerSupportProvider
 import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
 import com.rapiddweller.datamimic.core.PlatformErrorCode
 import com.rapiddweller.datamimic.core.PlatformException
+import com.rapiddweller.datamimic.core.isTransient
 import com.rapiddweller.datamimic.core.lsp.DocumentUris
 import com.rapiddweller.datamimic.core.lsp.LspBridge
 import com.rapiddweller.datamimic.core.lsp.LspInit
 import com.rapiddweller.datamimic.core.lsp.LspLink
 import com.rapiddweller.datamimic.core.lsp.Reconnector
-import com.rapiddweller.datamimic.core.lsp.isTransient
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import com.rapiddweller.datamimic.ide.AuthState
