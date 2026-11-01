@@ -91,8 +91,8 @@ class WorkspaceSession(
     private val updatesFlow = MutableSharedFlow<WorkspaceUpdate>(extraBufferCapacity = 256)
     val updates: SharedFlow<WorkspaceUpdate> = updatesFlow
 
-    @Volatile
-    private var cachedTree: WorkspaceTree? = null
+    private val trees = LatestResult<WorkspaceTree>()
+    private val cachedTree: WorkspaceTree? get() = trees.current
 
     @Volatile
     var streamState: StreamState = StreamState.IDLE
@@ -170,9 +170,12 @@ class WorkspaceSession(
     }
 
     // WHY: the sync reads the tree itself; if reading it started another pass, passes would never stop.
-    private fun loadTree(): WorkspaceTree = workspace.tree(projectId).also {
-        cachedTree = it
+    private fun loadTree(): WorkspaceTree {
+        // WHY: two loads can overlap, and the older answer can arrive last; it must not hide a file that a newer load shows.
+        val ticket = trees.begin()
+        val tree = trees.offer(ticket, workspace.tree(projectId))
         updatesFlow.tryEmit(WorkspaceUpdate.TreeChanged)
+        return tree
     }
 
     /** Shared from a global project or otherwise not editable on the platform. */

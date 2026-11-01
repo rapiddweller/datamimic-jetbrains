@@ -5,9 +5,14 @@
 package com.rapiddweller.datamimic.core.workspace
 
 import com.rapiddweller.datamimic.core.FakePlatform
+import com.rapiddweller.datamimic.core.HttpMethod
+import com.rapiddweller.datamimic.core.PlatformErrorCode
+import com.rapiddweller.datamimic.core.PlatformException
 import com.rapiddweller.datamimic.core.PlatformHttp
+import com.rapiddweller.datamimic.core.PlatformResponse
 import com.rapiddweller.datamimic.core.SessionService
 import com.rapiddweller.datamimic.core.json
+import com.rapiddweller.datamimic.core.orThrow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -91,6 +96,45 @@ class WorkspaceTest {
 
         assertEquals("<setup/>", String(content.bytes))
         assertEquals("etag-1", content.etag)
+    }
+
+    @Test
+    fun `lists the file templates of the platform`() {
+        assertEquals(
+            listOf(FileTemplate("Ent Csv (.ent.csv)", ".ent.csv"), FileTemplate("Scr Py (.scr.py)", ".scr.py")),
+            workspace.templates("p1"),
+        )
+    }
+
+    @Test
+    fun `a file from a template is created through the template route, once`() {
+        val path = workspace.createFromTemplate("p1", "data", "customers", ".ent.csv")
+
+        assertEquals("data/customers.ent.csv", path)
+        assertEquals("name|surname|age\nPaul|Max|1" to "etag-1", platform.files[path])
+        assertEquals(listOf(path), platform.templateCreates)
+        assertFalse(platform.files.containsKey("from-template"))
+
+        val exists = assertThrows(PlatformException::class.java) { workspace.createFromTemplate("p1", "data", "customers", ".ent.csv") }
+        assertEquals(412, exists.status)
+        assertEquals(PlatformErrorCode.FILE_DESTINATION_EXISTS, exists.code)
+        assertEquals(listOf(path), platform.templateCreates)
+    }
+
+    @Test
+    fun `a template file in the project root has no leading slash`() {
+        assertEquals("job.scr.py", workspace.createFromTemplate("p1", "", "job", ".scr.py"))
+    }
+
+    @Test
+    fun `an error code the client does not know decodes as unknown and keeps the platform detail`() {
+        val headers = java.net.http.HttpHeaders.of(emptyMap()) { _, _ -> true }
+        val failure = assertThrows(PlatformException::class.java) {
+            PlatformResponse(400, """{"detail":"Bad name","code":"INVALID_FILE_PATH"}""", headers).orThrow(HttpMethod.POST, "/x")
+        }
+
+        assertEquals(PlatformErrorCode.UNKNOWN, failure.code)
+        assertTrue(failure.message!!.startsWith("Bad name"))
     }
 
     @Test

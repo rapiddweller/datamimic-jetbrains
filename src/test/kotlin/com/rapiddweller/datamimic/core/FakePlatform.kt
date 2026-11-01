@@ -61,6 +61,7 @@ class FakePlatform : AutoCloseable {
     val files: MutableMap<String, Pair<String, String>> = ConcurrentHashMap(mapOf("model/datamimic.xml" to ("<setup/>" to "etag-1")))
     val uploads = CopyOnWriteArrayList<Triple<String, String?, String?>>()
     val creates = CopyOnWriteArrayList<String>()
+    val templateCreates = CopyOnWriteArrayList<String>()
     val deletes = CopyOnWriteArrayList<String>()
     val moves = CopyOnWriteArrayList<Pair<String, String>>()
     val directories = CopyOnWriteArrayList<String>()
@@ -87,6 +88,9 @@ class FakePlatform : AutoCloseable {
     /** The next N uploads fail after [uploadGate] with [uploadFailureStatus]. */
     @Volatile var failingUploads = 0
     @Volatile var uploadFailureStatus = 503
+
+    /** Every read of these files fails with 500. */
+    val failingReads: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** When set, an acquire waits here before it is processed. */
     var acquireGate: CountDownLatch? = null
@@ -141,12 +145,34 @@ class FakePlatform : AutoCloseable {
             }
             exchange.respond(200, """{"project_id":"p1","revision":"r1","entries":[$entries]}""")
         }
+        authenticated("/api/v2/projects/p1/workspace/templates") { exchange ->
+            exchange.respond(
+                200,
+                """{"templates":[{"label":"Ent Csv (.ent.csv)","extension":".ent.csv"},{"label":"Scr Py (.scr.py)","extension":".scr.py"}]}""",
+            )
+        }
+        // WHY: the longer path wins over the "files/" prefix below, which takes any non-GET request as a file write.
+        authenticated("/api/v2/projects/p1/workspace/files/from-template") { exchange ->
+            if (exchange.requestMethod != "POST") return@authenticated exchange.error(405, "METHOD_NOT_ALLOWED", "Use POST")
+            if (exchange.requestHeaders.getFirst("If-None-Match") != "*") {
+                return@authenticated exchange.error(428, "PRECONDITION_REQUIRED", "Create needs If-None-Match: *")
+            }
+            val body = exchange.body()
+            val field = { name: String -> Regex(""""$name":"([^"]*)"""").find(body)!!.groupValues[1] }
+            val (dir, extension) = field("file_dir") to field("file_extension")
+            val path = listOf(dir, field("file_name") + extension).filter(String::isNotEmpty).joinToString("/")
+            if (path in files) return@authenticated exchange.error(412, "FILE_DESTINATION_EXISTS", "File already exists")
+            templateCreates += path
+            files[path] = (if (extension == ".ent.csv") "name|surname|age\nPaul|Max|1" else "import os") to "etag-1"
+            exchange.respond(200, """{"path":"$path","action":"created"}""")
+        }
         authenticated("/api/v2/projects/p1/workspace/files/") { exchange ->
             val path = exchange.projectPath("/api/v2/projects/p1/workspace/files/")
             val current = files[path]
             when (exchange.requestMethod) {
                 "GET" -> {
                     if (current == null) return@authenticated exchange.error(404, "NOT_FOUND", "missing")
+                    if (path in failingReads) return@authenticated exchange.error(500, "INTERNAL_SERVER_ERROR", "Read temporarily unavailable")
                     exchange.responseHeaders.add("ETag", current.second)
                     exchange.respond(200, Base64.getEncoder().encodeToString(current.first.toByteArray()))
                 }
