@@ -83,6 +83,9 @@ class FakePlatform : AutoCloseable {
     /** How many polls of a task answer "running" before its result. */
     @Volatile var uploadTaskPolls = 1
 
+    /** The next polls of an upload task answer HTTP 503, this many times. */
+    @Volatile var uploadStatusOutages = 0
+
     /** When set, every task ends with returncode 1 and this text, and writes no file. */
     @Volatile var uploadTaskFailure: String? = null
 
@@ -196,6 +199,10 @@ class FakePlatform : AutoCloseable {
             val taskId = exchange.projectPath(prefix)
             val start = taskId.removePrefix("t").toIntOrNull()?.let { uploadTaskStarts.getOrNull(it - 1) }
                 ?: return@authenticated exchange.error(404, "UPLOAD_GENERATE_TASK_NOT_FOUND", "Task not found")
+            if (uploadStatusOutages > 0) {
+                uploadStatusOutages--
+                return@authenticated exchange.error(503, "SERVICE_UNAVAILABLE", "The platform is busy")
+            }
             if (uploadPolls.merge(taskId, 1, Int::plus)!! <= uploadTaskPolls) {
                 return@authenticated exchange.respond(200, """{"returncode":3,"message":"Running","task_id":"$taskId","data":{"task_id":"$taskId","status":"RUNNING","file_uris":[]}}""")
             }

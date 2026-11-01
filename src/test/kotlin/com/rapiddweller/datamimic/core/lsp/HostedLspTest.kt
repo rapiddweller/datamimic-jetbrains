@@ -9,6 +9,7 @@ import com.rapiddweller.datamimic.core.FakeWebSocketServer
 import com.rapiddweller.datamimic.core.PlatformErrorCode
 import com.rapiddweller.datamimic.core.PlatformException
 import com.rapiddweller.datamimic.core.PlatformHttp
+import com.rapiddweller.datamimic.core.isTransient
 import com.rapiddweller.datamimic.core.SessionExpiredException
 import com.rapiddweller.datamimic.core.SessionService
 import com.rapiddweller.datamimic.core.StoredSession

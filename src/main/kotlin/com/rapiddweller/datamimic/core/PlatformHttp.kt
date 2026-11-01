@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -125,6 +126,11 @@ private data class PlatformErrorBody(
 
 /** [detail] is the platform's own text; [message] adds the request for logs. */
 class PlatformException(val status: Int, val code: PlatformErrorCode, val detail: String, message: String = detail) : RuntimeException(message)
+
+/** Whether the same platform call can work later: no network, or a platform that is down. A 4xx answer does not change. */
+internal fun Exception.isTransient(): Boolean = this is IOException || (this is PlatformException && status >= SERVER_ERROR)
+
+private const val SERVER_ERROR = 500
 
 class SessionExpiredException : RuntimeException("Your DATAMIMIC session has ended. Sign in again.")
 

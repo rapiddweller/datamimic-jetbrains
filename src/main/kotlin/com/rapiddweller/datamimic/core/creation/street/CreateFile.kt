@@ -4,6 +4,7 @@
 
 package com.rapiddweller.datamimic.core.creation.street
 
+import com.rapiddweller.datamimic.core.isTransient
 import com.rapiddweller.datamimic.core.workspace.EntryKind
 import com.rapiddweller.datamimic.core.workspace.UploadStatus
 import com.rapiddweller.datamimic.core.workspace.UploadTaskApi
@@ -73,16 +74,29 @@ suspend fun createOnPlatform(
     }
 }
 
-private suspend fun awaitUpload(uploads: UploadTaskApi, projectId: String, taskId: String, pollIntervalMs: Long): PlatformResult.Created {
+private suspend fun awaitUpload(uploads: UploadTaskApi, projectId: String, taskId: String, pollIntervalMs: Long): PlatformResult {
+    var outages = 0
     while (true) {
         delay(pollIntervalMs)
-        when (val status = uploads.status(projectId, taskId)) {
+        val status = try {
+            uploads.status(projectId, taskId).also { outages = 0 }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // WHY: a short network or platform outage does not stop the task; only a longer one ends the wait.
+            if (!e.isTransient()) throw e
+            if (++outages >= MAX_POLL_OUTAGES) return PlatformResult.StillRunning(taskId)
+            continue
+        }
+        when (status) {
             UploadStatus.Running -> continue
             is UploadStatus.Succeeded -> return PlatformResult.Created(status.paths)
             is UploadStatus.Failed -> throw UploadFailedException(status.message)
         }
     }
 }
+
+private const val MAX_POLL_OUTAGES = 5
 
 /**
  * The target paths of [request] that exist as files on the platform.

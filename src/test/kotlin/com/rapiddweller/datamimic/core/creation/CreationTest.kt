@@ -356,6 +356,26 @@ class CreationTest {
     }
 
     @Test
+    fun `a short outage while the upload task runs does not end the wait`() {
+        platform.uploadStatusOutages = 3
+        val request = flow(source("orders.json"), "Model from JSON").toRequest("data", "orders")
+
+        val result = runBlocking { platformStep(request) }
+
+        assertEquals(PlatformResult.Created(listOf("data/orders.xml")), result)
+    }
+
+    @Test
+    fun `a long outage while the upload task runs reports that the task still runs`() {
+        platform.uploadStatusOutages = Int.MAX_VALUE
+        val request = flow(source("orders.json"), "Model from JSON").toRequest("data", "orders")
+
+        val result = runBlocking { platformStep(request) }
+
+        assertEquals(PlatformResult.StillRunning("t1"), result)
+    }
+
+    @Test
     fun `a cancel while the upload task runs propagates and stops the polling`() {
         platform.uploadTaskPolls = Int.MAX_VALUE
         val request = flow(source("orders.json"), "Model from JSON").toRequest("data", "orders")
