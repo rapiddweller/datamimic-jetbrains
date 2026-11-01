@@ -4,8 +4,14 @@
 
 ## [Unreleased]
 
-- Create DATAMIMIC files from the platform's templates: *New > DATAMIMIC File…* in the Project view. The dialog lists the file types that the platform offers. The new file opens with its example content.
+## [0.6.0]
+
+Create typed DATAMIMIC files from the IDE, and keep the language server connected.
+
+- Create DATAMIMIC files from the platform's templates: *New > DATAMIMIC File…* in the Project view. The dialog lists the file types that the platform offers, and typing in the list jumps to a match. The new file opens with its example content.
 - Fixed: the language server connects again on its own after a network change or sleep. The status bar shows *reconnecting* meanwhile.
+- Fixed: an older read of the project's file list no longer replaces a newer one, so new platform files reach the local folder reliably.
+- Fixed: the DATAMIMIC icon was too large in menus. It has a 16x16 version now.
 
 ## [0.5.0]
 
