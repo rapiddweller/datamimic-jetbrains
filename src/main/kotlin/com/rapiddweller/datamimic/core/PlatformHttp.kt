@@ -142,7 +142,7 @@ internal class PlatformSessionFence(private val sessions: SessionService, privat
 
 internal val DOWNLOAD_TIMEOUT: Duration = Duration.ofMinutes(10)
 
-// WHY: an upload can be 100 MB, and 60 s is too short on a slow link.
+// WHY: an upload task can take 100 MB, and 60 s is too short on a slow link. File saves (PUT) keep their own timeout.
 private val UPLOAD_TIMEOUT: Duration = Duration.ofMinutes(5)
 
 /** Authenticated transport of one IDE process: session cookie, platform Origin and client binding on every request. */
@@ -236,7 +236,7 @@ internal fun HttpClient.sendPlatformRequest(
     headers: Map<PlatformHeader, String>,
 ): PlatformResponse {
     val builder = HttpRequest.newBuilder(URI(origin.value + path))
-        .timeout(if (body is RequestBody.Multipart) UPLOAD_TIMEOUT else method.timeout)
+        .timeout(if (body is RequestBody.Multipart && method == HttpMethod.POST) UPLOAD_TIMEOUT else method.timeout)
         .header(PlatformHeader.ORIGIN.wireName, origin.value)
     headers.forEach { (name, value) -> builder.header(name.wireName, value) }
     val publisher = when (body) {
