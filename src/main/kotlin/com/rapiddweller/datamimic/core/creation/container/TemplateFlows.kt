@@ -14,7 +14,7 @@ fun templateFlows(templates: List<FileTemplate>): List<CreationFlow> = templates
         override val id = "template" + template.extension
         override val label = template.label
 
-        override fun toRequest(dir: String, name: String, choices: Map<String, String>): CreationRequest =
+        override fun toRequest(dir: String, name: String, values: Map<String, String>): CreationRequest =
             CreationRequest.FromTemplate(dir, name, template.extension)
     }
 }

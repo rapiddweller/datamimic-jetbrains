@@ -33,6 +33,9 @@ generation runs, and MCP access for IDE agents.
 - *New > DATAMIMIC Model from File…* makes a model from a `.json`, `.xml` or `.csv` file. The platform writes the model
   into the selected folder. The template flow also writes a template. The source file can be anywhere on the disk. For a
   CSV file the dialog detects the delimiter, and you can change it. The dialog asks before it replaces existing files.
+- *New > DATAMIMIC Migration…* migrates a GWA workbook (`.xlsm`) to an `.opctl.csv` file, or an AMA archive (`.ama`) with
+  its `.ini` file to a model and EDI templates. The dialog asks for the schema version (GWA) and the template folder
+  (AMA). It asks before it replaces files in the template folder.
 - Server-side edit locks: showing a file takes its lock, a banner explains when someone else holds it, and
   *Take over…* overrides it after confirmation.
 - Completion and checks for the folder's XML files from the platform's language server

@@ -15,7 +15,7 @@ class CreationArchitectureTest {
     private val street = main.resolve("core/creation/street")
     private val container = main.resolve("core/creation/container")
     private val truck = main.resolve("ide/creation/truck")
-    private val compositionRoots = listOf("NewDatamimicFileAction.kt", "GenerateModelFromFileAction.kt").map { main.resolve("ide/creation/$it") }
+    private val compositionRoots = listOf("NewDatamimicFileAction.kt", "GenerateModelFromFileAction.kt", "MigrateFromFileAction.kt").map { main.resolve("ide/creation/$it") }
 
     @Test
     fun `the scanned folders and files exist, so no rule passes on an empty scan`() {

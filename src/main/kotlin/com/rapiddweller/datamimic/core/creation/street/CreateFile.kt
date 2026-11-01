@@ -4,6 +4,8 @@
 
 package com.rapiddweller.datamimic.core.creation.street
 
+import com.rapiddweller.datamimic.core.creation.Field
+import com.rapiddweller.datamimic.core.creation.FileInput
 import com.rapiddweller.datamimic.core.isTransient
 import com.rapiddweller.datamimic.core.workspace.EntryKind
 import com.rapiddweller.datamimic.core.workspace.UploadStatus
@@ -17,6 +19,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Base64
 
 /** One file that the platform created. [local] is null when the file is not in the local folder (yet). */
 data class CreatedFile(val path: String, val local: Path?)
@@ -99,14 +102,17 @@ private suspend fun awaitUpload(uploads: UploadTaskApi, projectId: String, taskI
 private const val MAX_POLL_OUTAGES = 5
 
 /**
- * The target paths of [request] that exist as files on the platform.
+ * The target paths of [request] that exist as files on the platform, and the files in its folders.
  *
  * It reads the tree from the platform, because the tree of [session] is a cache that is stale while the event stream
  * is down.
  */
 suspend fun existingTargets(request: CreationRequest, api: WorkspaceApi, session: WorkspaceSession): List<String> {
     val tree = withContext(Dispatchers.IO) { api.tree(session.projectId) }
-    return request.targetPaths().filter { tree.entry(it)?.kind == EntryKind.FILE }
+    val targets = request.targetPaths().filter { tree.entry(it)?.kind == EntryKind.FILE }
+    val folders = (request as? CreationRequest.FromUpload)?.folders.orEmpty()
+    val inFolders = tree.entries.filter { entry -> entry.kind == EntryKind.FILE && folders.any { entry.path.startsWith("$it/") } }.map { it.path }
+    return (targets + inFolders).distinct()
 }
 
 /** Why the local file [source] cannot be uploaded, or null. */
@@ -119,6 +125,28 @@ fun sourceProblem(source: String): String? {
         else -> null
     }
 }
+
+/** The largest file that a dialog field can embed in the request. */
+const val MAX_EMBEDDED_BYTES = 1L * 1024 * 1024
+
+/** Why the local file [path] cannot go into the request, or null. */
+fun embeddedProblem(path: String): String? {
+    val file = Path.of(path)
+    return when {
+        !Files.isRegularFile(file) || !Files.isReadable(file) -> "The file $path cannot be read."
+        Files.size(file) > MAX_EMBEDDED_BYTES -> "The file $path is larger than 1 MB."
+        else -> null
+    }
+}
+
+/** The content of the local file [path] as Base64, for a [com.rapiddweller.datamimic.core.creation.FileInput]. */
+fun embeddedContent(path: String): String = Base64.getEncoder().encodeToString(Files.readAllBytes(Path.of(path)))
+
+/** [values] with the Base64 content of each [FileInput] file, for the flow. @throws java.io.IOException when a file cannot be read. */
+fun withEmbeddedFiles(fields: List<Field>, values: Map<String, String>): Map<String, String> =
+    values + fields.filterIsInstance<FileInput>().mapNotNull { field ->
+        values[field.id]?.trim()?.takeIf { it.isNotEmpty() }?.let { field.id to embeddedContent(it) }
+    }
 
 /** Pulls files that the platform created into the local folder. It never throws, except for a cancellation. */
 suspend fun pullCreated(paths: List<String>, session: WorkspaceSession): CreatedFiles {
