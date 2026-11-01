@@ -16,7 +16,7 @@ sealed interface CreationRequest {
      * Files that the platform's upload task makes from the local file [source].
      *
      * @param customFields the `custom_fields` form field, including `file_name`.
-     * @param targets the project paths that the task writes, in the order of the platform.
+     * @param targets the project paths that the task writes. The first is the model file, which the IDE opens.
      */
     data class FromUpload(
         val dir: String,

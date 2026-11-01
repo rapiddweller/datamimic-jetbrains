@@ -35,32 +35,39 @@ Constraints:
 ## Decision
 
 Add *New > DATAMIMIC File…* to the Project view. One dialog has a type list, a name field and a preset folder. Issue #64
-adds *Generate DATAMIMIC Model…* for JSON, XML and CSV files on the same architecture.
+adds *New > DATAMIMIC Model from File…* for JSON, XML and CSV files, on the same architecture and with the same dialog. A
+file chooser asks for the source file. The source can be outside the project, because the platform needs only its
+content. The platform does not detect the delimiter of a CSV source and uses the project default. The dialog
+detects the delimiter from the first lines instead. The user can change it.
 
 Architecture. It follows the Street, Truck and Container rules of the web UI wizard
 (`FileWizardV2` in the platform repository). Kotlin needs fewer layers than React, so only the rules and the layers
 with a real user exist.
 
-- **Container** (`core/creation/container`): one file per flow. A flow is plain data and builds a `CreationRequest`. It
-  does no I/O.
-- **Street** (`core/creation/street`): `createFile` runs a `CreationRequest` against the platform API, then waits
-  until the file exists in the local folder. It chooses its action by the type of the request, never by a flow name.
+- **Container** (`core/creation/container`): one file for each group of flows (`TemplateFlows`, `UploadFlows`). A flow
+  is plain data. It has a label, a list of `Choice` values (fixed options, for example the generation mode), an initial
+  name and a name rule, and it builds a `CreationRequest`. It does no I/O.
+- **Street** (`core/creation/street`): two steps. `createOnPlatform` runs a `CreationRequest` against the platform API.
+  `pullCreated` brings the created files into the local folder. The street chooses its action by the type of the
+  request (`FromTemplate`, `FromUpload`), never by a flow name.
 - **Truck** (`ide/creation/truck`): the dialog. It shows any flow and names no flow.
-- **Composition root**: `NewDatamimicFileAction` is the only class that imports the containers. It replaces the registry
-  of the web UI.
+- **Composition roots**: `NewDatamimicFileAction` (template flows) and `GenerateModelFromFileAction` (upload flows) are
+  the only classes that import the containers. They replace the registry of the web UI.
 
 Dependency rules, enforced by one text-scan test in the style of `SessionTest`:
 
 1. `core/**` never imports `com.intellij`.
-2. Only `NewDatamimicFileAction` imports `core.creation.container`.
+2. Only `NewDatamimicFileAction` and `GenerateModelFromFileAction` import `core.creation.container`. The test names
+   both files and checks that they exist.
 3. Street and Truck never name a flow or an extension literal.
 4. Containers do no I/O.
 
 Behavior:
 
 1. The file types come from `GET /workspace/templates`. The plugin keeps no list of types.
-2. `createFile` posts to `files/from-template` with `If-None-Match: *`. Then it calls `refreshTree()` and
-   `sync.syncNow()`, resolves the local path, and opens the file. It never writes the file locally.
+2. `createOnPlatform` posts to `files/from-template` with `If-None-Match: *`. Then `pullCreated` calls `refreshTree()`
+   and `sync.syncNow()` and resolves the local path, and the action opens the file. The plugin never writes the file
+   locally.
 3. The result reports two steps: "created on the platform" and "pulled to the local folder". If the pull fails or is
    late, the user sees a notice and not a failure. A retry meets HTTP 412.
 4. The platform owns the name rules. The dialog checks only "not blank" and "no slash". It shows the `detail` text of a
@@ -71,10 +78,36 @@ Behavior:
 6. The action is active only when the active project has a session and a local folder that contains the target
    directory. The code checks again before the call.
 
-For #64: a sealed `Field` type for the dialog (exhaustive `when`), an upload task API with polling, a longer timeout and
-extra form fields in `RequestBody.Multipart`, and an overwrite check. The upload task overwrites existing files without
-a message. The overwrite check reads the tree fresh, not from the cache. If the deadline passes, the plugin stops waiting
-and reports "still running", because the platform task goes on.
+For #64 (model from a file):
+
+1. The action shows only for one selected `.json`, `.xml` or `.csv` file in a synced folder of a connected DATAMIMIC
+   window. `uploadFlows` decides the extension, so the action repeats no extension list. The model goes into the folder
+   of the source file.
+2. The action saves unsaved editor changes of the source file first, because the upload sends the file on disk.
+3. The flows depend on the extension: a model from JSON, XML or CSV, and a model with a template from JSON or XML. The
+   model flows of JSON and XML offer the generation mode as a `Choice`. A `Choice` list replaces the planned sealed
+   `Field` type, because the name field is the same for all flows and only fixed choices differ.
+4. The name starts as the source file name without its extension. The upload flows have their own name rule: letters,
+   digits, `.`, `-` and `_`, a letter or a digit at both ends, no `..` and no `--`. This repeats the platform's name
+   cleaning on purpose. Without it, the platform changes the name silently or fails late with a misleading message.
+5. Before the upload, the action reads the tree fresh from the platform, not from the cache. If a target exists, the
+   user must confirm the replacement, because the upload task overwrites files without a message. *Back* returns to
+   the dialog with the same values.
+6. `createOnPlatform` starts the upload task and polls its status every 2 seconds, in modal progress with a cancel
+   button. After 5 minutes, or after 5 failed polls in a row, it returns "still running". A failed poll with a network
+   error or HTTP 5xx is transient; a 4xx ends the wait. A cancel stops only the wait. In all three cases
+   the user gets the notice that the platform still generates the files, because the platform task goes on.
+7. On success, the action pulls the files and opens the model file. The model file is the first target of the request.
+8. Errors: HTTP 409 `UPLOAD_GENERATE_ALREADY_RUNNING` shows a message and starts no second task. Another 4xx returns to
+   the dialog with the platform text. A failed task shows the platform text and says that some files can exist.
+
+Special cases and limits of #64, read from the platform code:
+
+- The template file and the model file are written one after the other, without a rollback.
+- Invalid JSON for a model, and invalid XML, fail late in the platform worker. The text is cut to 240 characters.
+- The limit is 100 MB for each file. The plugin checks it before the upload.
+- The platform reads at most 1000 CSV rows, and the first row is always the header.
+- The platform has no deadline for a task. The plugin does not use the cancel call of the platform.
 
 Alternatives not chosen:
 
@@ -96,6 +129,9 @@ Alternatives not chosen:
   notice and the file exists on the platform only.
 - The dialog is a Swing dialog built for 2024.2 and later. The Plugin Verifier matrix (ADR 0005) must run by hand for
   the UI change.
+- The upload name rule is a second copy of a platform rule. If the platform changes its name cleaning, the plugin can
+  refuse a name that the platform accepts. A refusal before the upload is better than a silent change or a late failure.
+- "Still running" is not a result. The files reach the local folder through the normal sync when the task ends.
 
 ## Verification
 
@@ -104,5 +140,8 @@ Alternatives not chosen:
 - `CreationTest`: create, refresh, sync, and the file on disk; HTTP 412; the event stream not live; a pull that fails
   after a successful create.
 - The import-scan test for the four dependency rules.
-- `PluginRegistrationTest`: the action id.
-- Not verified yet: the dialog in a real IDE, the look from 2024.2 to 2026.2, and the Plugin Verifier run.
+- `CreationTest` for #64: the flows for each extension, the name rule, the request with the model file first, the
+  fresh overwrite check, the size limit, upload success, failure, HTTP 409, the deadline, short and long poll outages,
+  and a cancel during the poll.
+- `PluginRegistrationTest`: both action ids and the *New* group.
+- Not verified yet: the dialogs in a real IDE, the look from 2024.2 to 2026.2, and a run against a real platform.

@@ -30,6 +30,9 @@ generation runs, and MCP access for IDE agents.
 - *New > DATAMIMIC File…* in the Project view creates a file from one of the platform's templates (entity data,
   weighting, scripts, templates, and more) with example content. The platform lists the file types
   ([ADR 0006](docs/adr/0006-file-creation-wizard.md)).
+- *New > DATAMIMIC Model from File…* makes a model from a `.json`, `.xml` or `.csv` file. The platform writes the model
+  into the selected folder. The template flow also writes a template. The source file can be anywhere on the disk. For a
+  CSV file the dialog detects the delimiter, and you can change it. The dialog asks before it replaces existing files.
 - Server-side edit locks: showing a file takes its lock, a banner explains when someone else holds it, and
   *Take over…* overrides it after confirmation.
 - Completion and checks for the folder's XML files from the platform's language server

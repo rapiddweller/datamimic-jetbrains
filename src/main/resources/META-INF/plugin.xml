@@ -56,6 +56,11 @@
                 description="Create a DATAMIMIC file from a platform template, such as entity data, weighting or a script">
             <add-to-group group-id="NewGroup" anchor="last"/>
         </action>
+        <action id="Datamimic.GenerateModel" class="com.rapiddweller.datamimic.ide.creation.GenerateModelFromFileAction"
+                text="DATAMIMIC Model from File…" icon="/icons/datamimic.svg"
+                description="Generate a DATAMIMIC model from a JSON, XML or CSV file on the platform">
+            <add-to-group group-id="NewGroup" anchor="last"/>
+        </action>
     </actions>
 
     <applicationListeners>

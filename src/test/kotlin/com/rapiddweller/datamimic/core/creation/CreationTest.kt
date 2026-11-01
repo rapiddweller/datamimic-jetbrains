@@ -9,6 +9,7 @@ import com.rapiddweller.datamimic.core.PlatformErrorCode
 import com.rapiddweller.datamimic.core.PlatformException
 import com.rapiddweller.datamimic.core.PlatformHttp
 import com.rapiddweller.datamimic.core.SessionService
+import com.rapiddweller.datamimic.core.creation.container.detectDelimiter
 import com.rapiddweller.datamimic.core.creation.container.templateFlows
 import com.rapiddweller.datamimic.core.creation.container.uploadFlows
 import com.rapiddweller.datamimic.core.creation.street.CreatedFile
@@ -213,14 +214,72 @@ class CreationTest {
     }
 
     @Test
+    fun `a name that replaces the source file is refused, and the initial name avoids it`() {
+        val inProject = { source: String, dir: String -> uploadFlows(source, dir, source.removePrefix("/")) }
+        val xml = inProject("/data/customers.xml", "data")
+
+        assertEquals(listOf("customers-model", "customers-model"), xml.map { it.initialName })
+        xml.forEach { assertNotNull(it.nameProblem("customers")) }
+        assertNull(xml.first().nameProblem("customers-model"))
+        assertNotNull("case does not matter", inProject("/data/Customers.XML", "data").first().nameProblem("customers"))
+        val template = inProject("/data/orders.template.xml", "data")
+        assertEquals("orders.template-model", template.first().initialName)
+        assertNull("a JSON source never meets its own model name", inProject("/data/customers.json", "data").first().nameProblem("customers"))
+    }
+
+    @Test
+    fun `a source outside the project, or in another folder, is never replaced`() {
+        val outside = uploadFlows("/home/me/customers.xml", "data", null)
+        val otherFolder = uploadFlows("/p/customers.xml", "data", "other/customers.xml")
+
+        for (flows in listOf(outside, otherFolder)) {
+            assertEquals(listOf("customers", "customers"), flows.map { it.initialName })
+            flows.forEach { assertNull(it.nameProblem("customers")) }
+        }
+    }
+
+    @Test
     fun `only the model flows of JSON and XML offer the generation mode, with mirror first`() {
-        val modes = (uploadFlows("a.json") + uploadFlows("a.xml") + uploadFlows("a.csv")).filter { it.choices.isNotEmpty() }
+        val modes = (uploadFlows("a.json") + uploadFlows("a.xml") + uploadFlows("a.csv")).filter { flow -> flow.choices.any { it.id == "generation_mode" } }
 
         assertEquals(listOf("Model from JSON", "Model from XML"), modes.map { it.label })
         val mode = modes.first().choices.single()
         assertEquals(listOf("mirror", "synthetic"), mode.options.map { it.value })
         assertEquals(listOf("Preserve exact values", "Infer generators & protect PII"), mode.options.map { it.label })
         assertEquals("mirror", mode.default)
+    }
+
+    @Test
+    fun `the delimiter is detected from the sample of a CSV source`() {
+        assertEquals('|', detectDelimiter("id|name|city\n1|Ann|Köln\n2|Bob|Bonn\n"))
+        assertEquals(';', detectDelimiter("id;name\n1;Ann\n"))
+        assertEquals(',', detectDelimiter("id,name\n1,Ann\n"))
+        assertEquals('\t', detectDelimiter("id\tname\n1\tAnn\n"))
+        assertEquals("a delimiter inside quotes does not count", ';', detectDelimiter("id;note\n1;\"a,b,c\"\n2;\"d,e\"\n"))
+        assertEquals("a decimal comma does not beat the delimiter", ';', detectDelimiter("id;price\n1;2,5\n2;3,5\n"))
+        assertEquals("the unterminated last line is ignored", '|', detectDelimiter("a|b\n1|2\n3|"))
+        assertEquals('|', detectDelimiter("a|b"))
+        assertNull(detectDelimiter(""))
+        assertNull("one column", detectDelimiter("id\n1\n2\n"))
+        assertNull("rows with different counts", detectDelimiter("a;b\n1;2;3\n"))
+    }
+
+    @Test
+    fun `the CSV flow selects the detected delimiter and sends it, and the project default sends none`() {
+        val csv = { sample: String -> uploadFlows("/in/a.csv", "d", null, sample).single() }
+        val delimiter = { sample: String -> csv(sample).choices.single() }
+
+        assertEquals("|", delimiter("a|b\n1|2\n").default)
+        assertEquals("", delimiter("a\n1\n").default)
+        assertEquals(listOf(";", ",", "|", "\t", ""), delimiter("a|b\n").options.map { it.value })
+        assertTrue(delimiter("a|b\n").options.single { it.value == "|" }.label.endsWith("detected"))
+        assertTrue(delimiter("a\n").options.single { it.value == "" }.label.contains("no delimiter detected"))
+
+        val sent = { sample: String, picked: Map<String, String> -> (csv(sample).toRequest("d", "people", picked) as CreationRequest.FromUpload).customFields }
+        assertEquals(buildJsonObject { put("file_name", "people"); put("delimiter", "|") }, sent("a|b\n", emptyMap()))
+        assertEquals(buildJsonObject { put("file_name", "people"); put("delimiter", ";") }, sent("a|b\n", mapOf("delimiter" to ";")))
+        assertEquals(buildJsonObject { put("file_name", "people") }, sent("a|b\n", mapOf("delimiter" to "")))
+        assertEquals(buildJsonObject { put("file_name", "people") }, sent("a\n", emptyMap()))
     }
 
     @Test
@@ -233,14 +292,14 @@ class CreationTest {
         }
 
         assertEquals(
-            upload("data", UploadFileType.JSON_TEMPLATE, name, listOf("data/people.template.json", "data/people.xml")),
+            upload("data", UploadFileType.JSON_TEMPLATE, name, listOf("data/people.xml", "data/people.template.json")),
             flow("/in/a.json", "Model and Template from JSON").toRequest("data", "people"),
         )
         assertEquals(
             upload("", UploadFileType.JSON_MODEL, mirror, listOf("people.xml")),
             flow("/in/a.json", "Model from JSON").toRequest("", "people"),
         )
-        assertEquals(listOf("people.template.xml", "people.xml"), flow("a.xml", "Model and Template from XML").toRequest("", "people").targetPaths())
+        assertEquals(listOf("people.xml", "people.template.xml"), flow("a.xml", "Model and Template from XML").toRequest("", "people").targetPaths())
         assertEquals(
             upload("d", UploadFileType.XML_MODEL, synthetic, listOf("d/people.xml")).copy(source = "a.xml"),
             flow("a.xml", "Model from XML").toRequest("d", "people", mapOf("generation_mode" to "synthetic")),
@@ -273,7 +332,7 @@ class CreationTest {
         platform.files["data/customers.template.json"] = "{}" to "etag-1"
 
         assertNull(session.tree().entry("data/customers.template.json"))
-        assertEquals(listOf("data/customers.template.json", "data/customers.xml"), runBlocking { existingTargets(request, api, session) })
+        assertEquals(listOf("data/customers.xml", "data/customers.template.json"), runBlocking { existingTargets(request, api, session) })
     }
 
     @Test
