@@ -39,6 +39,7 @@ import com.rapiddweller.datamimic.core.workspace.LocalEditor
 import com.rapiddweller.datamimic.core.workspace.LocksApi
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
+import com.rapiddweller.datamimic.core.workspace.UploadTaskApi
 import com.rapiddweller.datamimic.core.workspace.WorkspaceApi
 import com.rapiddweller.datamimic.core.workspace.WorkspaceSession
 import kotlinx.coroutines.CoroutineScope
@@ -169,6 +170,7 @@ class DatamimicPlatform(internal val scope: CoroutineScope) : Disposable {
     val account = AccountApi(transport)
     val projects = ProjectsApi(transport)
     val workspace = WorkspaceApi(transport)
+    val uploads = UploadTaskApi(transport)
     val generation = GenerationApi(transport)
     val lsp = LspApi(transport)
     private val locks = LocksApi(transport)

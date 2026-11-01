@@ -20,6 +20,7 @@ import com.intellij.platform.ide.progress.withModalProgress
 import com.rapiddweller.datamimic.core.PlatformException
 import com.rapiddweller.datamimic.core.creation.container.templateFlows
 import com.rapiddweller.datamimic.core.creation.street.CreatedFile
+import com.rapiddweller.datamimic.core.creation.street.PlatformResult
 import com.rapiddweller.datamimic.core.creation.street.createOnPlatform
 import com.rapiddweller.datamimic.core.creation.street.pullCreated
 import com.rapiddweller.datamimic.core.creation.street.targetPaths
@@ -99,10 +100,10 @@ private suspend fun create(project: Project, identity: FolderIdentity, dir: Stri
         } catch (e: IllegalStateException) {
             return fail(project, "Cannot Create File", e)
         }
-        val paths = try {
+        val result = try {
             // WHY: no cancel button, because a cancel cannot stop a create that the platform already received.
             withModalProgress(owner, "Creating ${request.targetPaths().joinToString()}", Cancellation.nonCancellable()) {
-                createOnPlatform(request, platform.workspace, session)
+                createOnPlatform(request, platform.workspace, platform.uploads, session)
             }
         } catch (e: CancellationException) {
             throw e
@@ -112,6 +113,11 @@ private suspend fun create(project: Project, identity: FolderIdentity, dir: Stri
             continue
         } catch (e: Exception) {
             return fail(project, "Cannot Create File", e)
+        }
+        val paths = when (result) {
+            is PlatformResult.Created -> result.paths
+            // WHY: only an upload task outlives the wait; a template create answers at once.
+            is PlatformResult.StillRunning -> return notify(project, "The platform still creates ${request.targetPaths().joinToString()}.")
         }
         val created = try {
             withModalProgress(owner, "Syncing ${paths.joinToString()}", Cancellation.cancellable()) { pullCreated(paths, session) }
@@ -123,13 +129,17 @@ private suspend fun create(project: Project, identity: FolderIdentity, dir: Stri
         for (file in created) {
             val local = file.local
             if (local == null || !openCreatedFile(project, local)) {
-                NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
-                    .createNotification("Created ${file.path} on the platform. The local copy is still syncing.", NotificationType.INFORMATION)
-                    .notify(project)
+                notify(project, "Created ${file.path} on the platform. The local copy is still syncing.")
             }
         }
         return
     }
+}
+
+private fun notify(project: Project, text: String) {
+    NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
+        .createNotification(text, NotificationType.INFORMATION)
+        .notify(project)
 }
 
 private fun fail(project: Project, title: String, e: Exception) {

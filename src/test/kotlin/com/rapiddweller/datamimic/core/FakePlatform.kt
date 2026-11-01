@@ -88,7 +88,9 @@ class FakePlatform : AutoCloseable {
 
     /** When set, a start answers this (status, code, detail) and records nothing. */
     @Volatile var uploadStartRefusal: Triple<Int, String, String>? = null
-    private val uploadPolls = ConcurrentHashMap<String, Int>()
+
+    /** How many times each task id was polled. */
+    val uploadPolls = ConcurrentHashMap<String, Int>()
 
     /** Files shared from a global project: listed read-only. */
     val readOnly: MutableSet<String> = ConcurrentHashMap.newKeySet()
