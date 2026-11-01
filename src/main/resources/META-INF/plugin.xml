@@ -57,9 +57,9 @@
             <add-to-group group-id="NewGroup" anchor="last"/>
         </action>
         <action id="Datamimic.GenerateModel" class="com.rapiddweller.datamimic.ide.creation.GenerateModelFromFileAction"
-                text="Generate DATAMIMIC Model…" icon="/icons/datamimic.svg"
-                description="Generate a DATAMIMIC model from the selected JSON, XML or CSV file on the platform">
-            <add-to-group group-id="ProjectViewPopupMenu" anchor="after" relative-to-action="WeighingNewGroup"/>
+                text="DATAMIMIC Model from File…" icon="/icons/datamimic.svg"
+                description="Generate a DATAMIMIC model from a JSON, XML or CSV file on the platform">
+            <add-to-group group-id="NewGroup" anchor="last"/>
         </action>
     </actions>
 

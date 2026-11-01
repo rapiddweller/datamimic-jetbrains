@@ -6,7 +6,10 @@ package com.rapiddweller.datamimic.ide.creation
 
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
@@ -17,8 +20,11 @@ import com.intellij.platform.ide.progress.withModalProgress
 import com.rapiddweller.datamimic.core.creation.street.CreatedFile
 import com.rapiddweller.datamimic.core.creation.street.pullCreated
 import com.rapiddweller.datamimic.core.workspace.WorkspaceSession
+import com.rapiddweller.datamimic.ide.ActiveProject
 import com.rapiddweller.datamimic.ide.Cancellation
 import com.rapiddweller.datamimic.ide.NOTIFICATION_GROUP
+import com.rapiddweller.datamimic.ide.platformTargetError
+import com.rapiddweller.datamimic.ide.toNioPathOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -27,6 +33,19 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Path
 
 private val LOG = Logger.getInstance("#com.rapiddweller.datamimic.ide.creation")
+
+/** The project folder of the new file, empty for the project root, or null when the action does not apply here. */
+internal fun targetDir(e: AnActionEvent): String? {
+    val project = e.project ?: return null
+    // WHY: update() runs in every window, and creating the services signs in to the platform over the network.
+    val active = project.serviceIfCreated<ActiveProject>() ?: return null
+    val identity = active.identity ?: return null
+    val folder = active.folder ?: return null
+    if (platformTargetError(project, identity) != null) return null
+    val selected = e.getData(CommonDataKeys.VIRTUAL_FILE) ?: return ""
+    val dir = (if (selected.isDirectory) selected else selected.parent)?.toNioPathOrNull() ?: return null
+    return if (dir == folder.root) "" else folder.pathOf(dir)
+}
 
 /**
  * UI thread. Pulls the created [paths] into the local folder and opens each file that [opens] selects. A file that is

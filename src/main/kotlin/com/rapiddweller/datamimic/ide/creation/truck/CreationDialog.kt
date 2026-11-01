@@ -31,7 +31,7 @@ import javax.swing.event.DocumentEvent
  * @param initialName the name to show first; empty takes the [CreationFlow.initialName] of the selected flow.
  * @param error a platform message about the last try, shown under the name.
  * @param initialChoices the selected [Choice.Option.value] for each [Choice.id] of the last try.
- * @param source the name of the local source file, shown read-only; null shows no source row.
+ * @param source the path of the local source file, shown read-only; null shows no source row.
  */
 class CreationDialog(
     project: Project,

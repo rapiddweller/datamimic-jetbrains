@@ -47,10 +47,7 @@ class PluginRegistrationTest : BasePlatformTestCase() {
         assertTrue("the action sits in the New menu", (ActionManager.getInstance().getAction("NewGroup") as ActionGroup).getChildren(null).contains(newFile))
         val generateModel = ActionManager.getInstance().getAction("Datamimic.GenerateModel")
         assertInstanceOf(generateModel, GenerateModelFromFileAction::class.java)
-        assertTrue(
-            "the action sits in the Project view context menu",
-            (ActionManager.getInstance().getAction("ProjectViewPopupMenu") as ActionGroup).getChildren(null).contains(generateModel),
-        )
+        assertTrue("the action sits in the New menu", (ActionManager.getInstance().getAction("NewGroup") as ActionGroup).getChildren(null).contains(generateModel))
         assertTrue(WritingAccessProvider.EP.getExtensions(project).any { it is PlatformWritingAccess })
         assertTrue(EditorNotificationProvider.EP_NAME.getExtensions(project).any { it is PlatformFileBanner })
         assertTrue(Configurable.PROJECT_CONFIGURABLE.getExtensions(project).any { it.id == "datamimic.aiAssistant" })

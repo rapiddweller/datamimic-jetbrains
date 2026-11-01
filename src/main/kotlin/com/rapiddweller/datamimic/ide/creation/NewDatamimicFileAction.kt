@@ -6,7 +6,6 @@ package com.rapiddweller.datamimic.ide.creation
 
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.project.DumbAwareAction
@@ -25,8 +24,6 @@ import com.rapiddweller.datamimic.ide.Cancellation
 import com.rapiddweller.datamimic.ide.DatamimicPlatform
 import com.rapiddweller.datamimic.ide.creation.truck.CreationDialog
 import com.rapiddweller.datamimic.ide.platformSession
-import com.rapiddweller.datamimic.ide.platformTargetError
-import com.rapiddweller.datamimic.ide.toNioPathOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,19 +48,6 @@ class NewDatamimicFileAction : DumbAwareAction() {
         val identity = project.serviceIfCreated<ActiveProject>()?.identity ?: return
         DatamimicPlatform.getInstance().scope.launch(Dispatchers.EDT) { create(project, identity, dir) }
     }
-}
-
-/** The project folder of the new file, empty for the project root, or null when the action does not apply here. */
-private fun targetDir(e: AnActionEvent): String? {
-    val project = e.project ?: return null
-    // WHY: update() runs in every window, and creating the services signs in to the platform over the network.
-    val active = project.serviceIfCreated<ActiveProject>() ?: return null
-    val identity = active.identity ?: return null
-    val folder = active.folder ?: return null
-    if (platformTargetError(project, identity) != null) return null
-    val selected = e.getData(CommonDataKeys.VIRTUAL_FILE) ?: return ""
-    val dir = (if (selected.isDirectory) selected else selected.parent)?.toNioPathOrNull() ?: return null
-    return if (dir == folder.root) "" else folder.pathOf(dir)
 }
 
 /** UI thread. Loads the file types, asks for the type and the name, creates the file and opens it. */

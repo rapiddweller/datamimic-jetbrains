@@ -9,11 +9,12 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.serviceIfCreated
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.withModalProgress
 import com.rapiddweller.datamimic.core.PlatformErrorCode
@@ -31,71 +32,72 @@ import com.rapiddweller.datamimic.ide.Cancellation
 import com.rapiddweller.datamimic.ide.DatamimicPlatform
 import com.rapiddweller.datamimic.ide.creation.truck.CreationDialog
 import com.rapiddweller.datamimic.ide.platformSession
-import com.rapiddweller.datamimic.ide.platformTargetError
 import com.rapiddweller.datamimic.ide.toNioPathOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 
 private const val TITLE = "Generate DATAMIMIC Model"
 private const val FAILED = "Cannot Generate Model"
 
 /**
- * Generates a DATAMIMIC model from the selected JSON, XML or CSV file, in the folder of that file. This is the second
- * composition root of the creation flows: it names the upload flows.
+ * Generates a DATAMIMIC model from a JSON, XML or CSV file in the selected folder of the window's DATAMIMIC project. A
+ * selected source file in the Project view skips the file chooser. This is the second composition root of the creation
+ * flows: it names the upload flows.
  */
 class GenerateModelFromFileAction : DumbAwareAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
     override fun update(e: AnActionEvent) {
-        e.presentation.isEnabledAndVisible = sourceFile(e) != null
+        e.presentation.isEnabledAndVisible = targetDir(e) != null
     }
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val source = sourceFile(e) ?: return
+        val dir = targetDir(e) ?: return
         val identity = project.serviceIfCreated<ActiveProject>()?.identity ?: return
+        val selected = e.getData(CommonDataKeys.VIRTUAL_FILE)?.takeIf { !it.isDirectory && uploadFlows(it.name).isNotEmpty() }
+        val source = selected ?: FileChooser.chooseFile(sourceChooser(), project, null) ?: return
+        val path = source.toNioPathOrNull() ?: return Messages.showErrorDialog(project, "Choose a file on the local disk.", TITLE)
         // WHY: the upload sends the file on disk; here the UI thread holds the write-intent lock that a save needs.
         val documents = FileDocumentManager.getInstance()
-        documents.getCachedDocument(source.file)?.takeIf { documents.isDocumentUnsaved(it) }?.let { documents.saveDocument(it) }
-        DatamimicPlatform.getInstance().scope.launch(Dispatchers.EDT) { generate(project, identity, source) }
+        documents.getCachedDocument(source)?.takeIf { documents.isDocumentUnsaved(it) }?.let { documents.saveDocument(it) }
+        DatamimicPlatform.getInstance().scope.launch(Dispatchers.EDT) { generate(project, identity, dir, path) }
     }
 }
 
-/** [dir] is the project folder of [file], empty for the project root; the model goes there. */
-private class SourceFile(val file: VirtualFile, val path: Path, val dir: String)
+// WHY: the chooser takes dropped files, and the flows decide which files it offers.
+private fun sourceChooser() = FileChooserDescriptor(true, false, false, false, false, false)
+    .withTitle("Choose a JSON, XML or CSV File")
+    .withFileFilter { uploadFlows(it.name).isNotEmpty() }
 
-/** The selected source file, or null when the action does not apply here. */
-private fun sourceFile(e: AnActionEvent): SourceFile? {
-    val project = e.project ?: return null
-    // WHY: update() runs in every window, and creating the services signs in to the platform over the network.
-    val active = project.serviceIfCreated<ActiveProject>() ?: return null
-    val identity = active.identity ?: return null
-    val folder = active.folder ?: return null
-    if (platformTargetError(project, identity) != null) return null
-    val file = e.getData(CommonDataKeys.VIRTUAL_FILE_ARRAY)?.singleOrNull() ?: return null
-    if (file.isDirectory || uploadFlows(file.name).isEmpty()) return null
-    val path = file.toNioPathOrNull() ?: return null
-    val parent = path.parent ?: return null
-    val dir = if (parent == folder.root) "" else folder.pathOf(parent) ?: return null
-    return SourceFile(file, path, dir)
-}
+/** The start of [path] for the delimiter detection. */
+private fun readSample(path: Path): String = Files.newInputStream(path).use { it.readNBytes(SAMPLE_BYTES) }.toString(Charsets.UTF_8)
+
+private const val SAMPLE_BYTES = 8192
 
 /** UI thread. Asks for the flow, the choices and the name, asks before it replaces files, then generates and opens the model. */
-private suspend fun generate(project: Project, identity: FolderIdentity, source: SourceFile) {
+private suspend fun generate(project: Project, identity: FolderIdentity, dir: String, source: Path) {
     val platform = DatamimicPlatform.getInstance()
     val owner = ModalTaskOwner.project(project)
-    val sourcePath = source.path.toString()
+    val sourcePath = source.toString()
     sourceProblem(sourcePath)?.let { return Messages.showErrorDialog(project, it, TITLE) }
-    val flows = uploadFlows(sourcePath)
-    val dir = source.dir
+    val sample = try {
+        readSample(source)
+    } catch (e: IOException) {
+        return fail(project, FAILED, e)
+    }
+    val sourceProjectPath = project.serviceIfCreated<ActiveProject>()?.folder?.pathOf(source)
+    val flows = uploadFlows(sourcePath, dir, sourceProjectPath, sample)
     val dialogOf = { last: CreationDialog?, error: String? ->
         CreationDialog(
             project, flows, dir, last?.flow?.id, last?.fileName.orEmpty(), error, last?.choices.orEmpty(),
-            dialogTitle = "Generate DATAMIMIC model", source = source.file.name,
+            dialogTitle = "Generate DATAMIMIC model", source = sourcePath,
         )
     }
     var dialog = dialogOf(null, null)

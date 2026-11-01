@@ -17,7 +17,7 @@ class GenerateModelFromFileActionTest : BasePlatformTestCase() {
             action,
             SimpleDataContext.builder()
                 .add(CommonDataKeys.PROJECT, project)
-                .add(CommonDataKeys.VIRTUAL_FILE_ARRAY, arrayOf(myFixture.tempDirFixture.createFile("data/customers.json", "{}")))
+                .add(CommonDataKeys.VIRTUAL_FILE, myFixture.tempDirFixture.createFile("data/customers.json", "{}"))
                 .build(),
         )
 

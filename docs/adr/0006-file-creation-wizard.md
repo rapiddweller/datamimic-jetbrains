@@ -35,8 +35,10 @@ Constraints:
 ## Decision
 
 Add *New > DATAMIMIC File…* to the Project view. One dialog has a type list, a name field and a preset folder. Issue #64
-adds *Generate DATAMIMIC Model…* to the Project view context menu of JSON, XML and CSV files, on the same architecture
-and with the same dialog.
+adds *New > DATAMIMIC Model from File…* for JSON, XML and CSV files, on the same architecture and with the same dialog. A
+file chooser asks for the source file. The source can be outside the project, because the platform needs only its
+content. For a CSV source the dialog detects the delimiter from the first lines, because the platform uses the project
+default and does not detect it. The user can change the delimiter.
 
 Architecture. It follows the Street, Truck and Container rules of the web UI wizard
 (`FileWizardV2` in the platform repository). Kotlin needs fewer layers than React, so only the rules and the layers
@@ -141,5 +143,5 @@ Alternatives not chosen:
 - `CreationTest` for #64: the flows for each extension, the name rule, the request with the model file first, the
   fresh overwrite check, the size limit, upload success, failure, HTTP 409, the deadline, short and long poll outages,
   and a cancel during the poll.
-- `PluginRegistrationTest`: both action ids, the *New* group, and the Project view context menu.
+- `PluginRegistrationTest`: both action ids and the *New* group.
 - Not verified yet: the dialogs in a real IDE, the look from 2024.2 to 2026.2, and a run against a real platform.
