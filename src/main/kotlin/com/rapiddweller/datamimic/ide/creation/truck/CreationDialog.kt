@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
+import com.intellij.ui.ComboboxSpeedSearch
 import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
@@ -39,6 +40,8 @@ class CreationDialog(
     private val flowBox = ComboBox(flows.toTypedArray()).apply {
         renderer = textListCellRenderer { it?.label.orEmpty() }
         flows.firstOrNull { it.id == initialFlowId }?.let { selectedItem = it }
+        // WHY: the platform offers about 30 types; typing in the list jumps to a match, so nobody scrolls.
+        ComboboxSpeedSearch.installSpeedSearch(this) { it.label }
     }
     private val nameField = JBTextField(initialName)
     private val errorLabel = JBLabel(error.orEmpty()).apply {
