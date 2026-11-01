@@ -1,5 +1,7 @@
 <!-- Follow the writing standard in AGENTS.md. Set the label: bug, enhancement or documentation. -->
 
+<!-- Write "Closes #<number>" for the issue. Delete this comment when there is no issue. -->
+
 Closes #
 
 ## Problem
