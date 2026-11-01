@@ -66,7 +66,8 @@ Behavior:
 4. The platform owns the name rules. The dialog checks only "not blank" and "no slash". It shows the `detail` text of a
    4xx answer. If the name exists (HTTP 412), the dialog stays open. No overwrite in #63.
 5. The platform call runs in modal progress without a cancel button, because a running HTTP call cannot be cancelled.
-   The pull and the open run in cancellable background progress.
+   The pull runs in a second modal progress that the user can cancel. A cancel there stops only the wait: the user gets
+   the notice that the file is created and that the sync goes on. The open runs after the pull.
 6. The action is active only when the active project has a session and a local folder that contains the target
    directory. The code checks again before the call.
 
