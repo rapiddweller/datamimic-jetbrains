@@ -13,6 +13,8 @@ import com.rapiddweller.datamimic.core.creation.container.templateFlows
 import com.rapiddweller.datamimic.core.creation.street.CreatedFile
 import com.rapiddweller.datamimic.core.creation.street.CreationRequest
 import com.rapiddweller.datamimic.core.creation.street.createFile
+import com.rapiddweller.datamimic.core.creation.street.nameProblem
+import com.rapiddweller.datamimic.core.creation.street.targetPaths
 import com.rapiddweller.datamimic.core.workspace.FileTemplate
 import com.rapiddweller.datamimic.core.workspace.LocksApi
 import com.rapiddweller.datamimic.core.workspace.NoEditor
@@ -28,6 +30,8 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -130,5 +134,17 @@ class CreationTest {
         assertEquals(listOf("Ent Csv (.ent.csv)", "Scr Py (.scr.py)"), flows.map { it.label })
         assertEquals(2, flows.map { it.id }.toSet().size)
         assertEquals(customers, flows.first().toRequest("data", "customers"))
+    }
+
+    @Test
+    fun `the target path joins folder, name and extension, without a leading slash in the root`() {
+        assertEquals(listOf(path), customers.targetPaths())
+        assertEquals(listOf("customers.ent.csv"), customers.copy(dir = "").targetPaths())
+    }
+
+    @Test
+    fun `the dialog rejects only blank names and names with a slash`() {
+        listOf("", "  ", "a/b", "a\\b").forEach { assertNotNull(it, nameProblem(it)) }
+        listOf("customers", "my customers", "..x", "Kunden-ä").forEach { assertNull(it, nameProblem(it)) }
     }
 }

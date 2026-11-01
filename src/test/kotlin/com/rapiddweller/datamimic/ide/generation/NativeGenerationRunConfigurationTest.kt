@@ -17,6 +17,7 @@ import com.rapiddweller.datamimic.core.generation.GenerationRun
 import com.rapiddweller.datamimic.core.generation.TaskType
 import com.rapiddweller.datamimic.core.generation.TaskStatus
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
+import com.rapiddweller.datamimic.ide.platformTargetError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -111,16 +112,16 @@ class NativeGenerationRunConfigurationTest : BasePlatformTestCase() {
     fun `test target validation rejects stale identity and origin`() {
         val expected = FolderIdentity(PlatformOrigin.parse("https://one.example"), "p1", "Payments")
         assertEquals(
-            "This run configuration belongs to another DATAMIMIC project.",
-            generationTargetError(expected, expected.copy(projectId = "p2"), expected.origin, null),
+            "This window has another DATAMIMIC project open.",
+            platformTargetError(expected, expected.copy(projectId = "p2"), expected.origin, null),
         )
         assertEquals(
-            "Sign in to https://one.example before running this configuration.",
-            generationTargetError(expected, expected, PlatformOrigin.parse("https://two.example"), null),
+            "Sign in to https://one.example first.",
+            platformTargetError(expected, expected, PlatformOrigin.parse("https://two.example"), null),
         )
         assertEquals(
             "DATAMIMIC is not connected to this project.",
-            generationTargetError(expected, expected, expected.origin, null),
+            platformTargetError(expected, expected, expected.origin, null),
         )
     }
 

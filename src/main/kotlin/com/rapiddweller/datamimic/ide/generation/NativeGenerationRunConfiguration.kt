@@ -30,6 +30,7 @@ import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.ide.DatamimicPlatform
 import com.rapiddweller.datamimic.ide.ToolWindowScope
 import com.rapiddweller.datamimic.ide.activeProject
+import com.rapiddweller.datamimic.ide.platformTargetError
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
@@ -90,13 +91,13 @@ class DatamimicRunConfiguration(
     override fun hideDisabledExecutorButtons() = true
 
     override fun checkConfiguration() {
-        generationTargetError(project, identity())?.let { throw RuntimeConfigurationError(it) }
+        platformTargetError(project, identity())?.let { throw RuntimeConfigurationError(it) }
     }
 
     override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState {
         if (executor.id != DefaultRunExecutor.EXECUTOR_ID) throw ExecutionException("DATAMIMIC generation supports Run only.")
         val identity = identity()
-        generationTargetError(project, identity)?.let { throw ExecutionException(it) }
+        platformTargetError(project, identity)?.let { throw ExecutionException(it) }
         return GenerationState(project, identity, taskType)
     }
 

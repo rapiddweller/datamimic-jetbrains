@@ -7,11 +7,15 @@ package com.rapiddweller.datamimic.ide;
 import com.intellij.platform.ide.progress.TaskCancellation;
 
 /** Kotlin resolves this through a Companion absent from 2024.2; the Java static method exists there. */
-final class Cancellation {
+public final class Cancellation {
     private Cancellation() {
     }
 
-    static TaskCancellation cancellable() {
+    public static TaskCancellation cancellable() {
         return TaskCancellation.cancellable();
+    }
+
+    public static TaskCancellation nonCancellable() {
+        return TaskCancellation.nonCancellable();
     }
 }
