@@ -37,8 +37,8 @@ Constraints:
 Add *New > DATAMIMIC File…* to the Project view. One dialog has a type list, a name field and a preset folder. Issue #64
 adds *New > DATAMIMIC Model from File…* for JSON, XML and CSV files, on the same architecture and with the same dialog. A
 file chooser asks for the source file. The source can be outside the project, because the platform needs only its
-content. For a CSV source the dialog detects the delimiter from the first lines, because the platform uses the project
-default and does not detect it. The user can change the delimiter.
+content. The platform does not detect the delimiter of a CSV source and uses the project default. The dialog
+detects the delimiter from the first lines instead. The user can change it.
 
 Architecture. It follows the Street, Truck and Container rules of the web UI wizard
 (`FileWizardV2` in the platform repository). Kotlin needs fewer layers than React, so only the rules and the layers
