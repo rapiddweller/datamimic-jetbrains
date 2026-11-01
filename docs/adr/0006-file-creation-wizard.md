@@ -62,7 +62,7 @@ Behavior:
 2. `createFile` posts to `files/from-template` with `If-None-Match: *`. Then it calls `refreshTree()` and
    `sync.syncNow()`, resolves the local path, and opens the file. It never writes the file locally.
 3. The result reports two steps: "created on the platform" and "pulled to the local folder". If the pull fails or is
-   late, the user sees a notice and not a failure. A retry would meet HTTP 412.
+   late, the user sees a notice and not a failure. A retry meets HTTP 412.
 4. The platform owns the name rules. The dialog checks only "not blank" and "no slash". It shows the `detail` text of a
    4xx answer. If the name exists (HTTP 412), the dialog stays open. No overwrite in #63.
 5. The platform call runs in modal progress without a cancel button, because a running HTTP call cannot be cancelled.
