@@ -18,6 +18,7 @@ import com.intellij.openapi.wm.WelcomeTabFactory
 import com.intellij.platform.lsp.api.LspServerSupportProvider
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.ui.EditorNotificationProvider
+import com.rapiddweller.datamimic.ide.creation.GenerateModelFromFileAction
 import com.rapiddweller.datamimic.ide.creation.NewDatamimicFileAction
 import com.rapiddweller.datamimic.ide.editing.PlatformFileBanner
 import com.rapiddweller.datamimic.ide.editing.PlatformWritingAccess
@@ -44,6 +45,12 @@ class PluginRegistrationTest : BasePlatformTestCase() {
         val newFile = ActionManager.getInstance().getAction("Datamimic.NewFile")
         assertInstanceOf(newFile, NewDatamimicFileAction::class.java)
         assertTrue("the action sits in the New menu", (ActionManager.getInstance().getAction("NewGroup") as ActionGroup).getChildren(null).contains(newFile))
+        val generateModel = ActionManager.getInstance().getAction("Datamimic.GenerateModel")
+        assertInstanceOf(generateModel, GenerateModelFromFileAction::class.java)
+        assertTrue(
+            "the action sits in the Project view context menu",
+            (ActionManager.getInstance().getAction("ProjectViewPopupMenu") as ActionGroup).getChildren(null).contains(generateModel),
+        )
         assertTrue(WritingAccessProvider.EP.getExtensions(project).any { it is PlatformWritingAccess })
         assertTrue(EditorNotificationProvider.EP_NAME.getExtensions(project).any { it is PlatformFileBanner })
         assertTrue(Configurable.PROJECT_CONFIGURABLE.getExtensions(project).any { it.id == "datamimic.aiAssistant" })

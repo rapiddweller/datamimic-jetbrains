@@ -71,7 +71,7 @@ private class UploadFlow(
             put("file_name", name)
             if (withMode) put(GENERATION_MODE.id, GENERATION_MODE.valueIn(choices))
         }
-        val targets = listOfNotNull(template, MODEL).map { projectPath(dir, name + it) }
+        val targets = listOfNotNull(MODEL, template).map { projectPath(dir, name + it) }
         return CreationRequest.FromUpload(dir, name, source, type, fields, targets)
     }
 }

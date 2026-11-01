@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Generate a DATAMIMIC model from a JSON, XML or CSV file: right-click the file in the Project view and choose *Generate DATAMIMIC Model…*. The platform writes the model, and with the template flow also a template, into the folder of the file. The plugin asks before it replaces existing files, and the model opens when it is ready.
+
 ## [0.6.0]
 
 Create typed DATAMIMIC files from the IDE, and keep the language server connected.

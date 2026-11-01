@@ -233,14 +233,14 @@ class CreationTest {
         }
 
         assertEquals(
-            upload("data", UploadFileType.JSON_TEMPLATE, name, listOf("data/people.template.json", "data/people.xml")),
+            upload("data", UploadFileType.JSON_TEMPLATE, name, listOf("data/people.xml", "data/people.template.json")),
             flow("/in/a.json", "Model and Template from JSON").toRequest("data", "people"),
         )
         assertEquals(
             upload("", UploadFileType.JSON_MODEL, mirror, listOf("people.xml")),
             flow("/in/a.json", "Model from JSON").toRequest("", "people"),
         )
-        assertEquals(listOf("people.template.xml", "people.xml"), flow("a.xml", "Model and Template from XML").toRequest("", "people").targetPaths())
+        assertEquals(listOf("people.xml", "people.template.xml"), flow("a.xml", "Model and Template from XML").toRequest("", "people").targetPaths())
         assertEquals(
             upload("d", UploadFileType.XML_MODEL, synthetic, listOf("d/people.xml")).copy(source = "a.xml"),
             flow("a.xml", "Model from XML").toRequest("d", "people", mapOf("generation_mode" to "synthetic")),
@@ -273,7 +273,7 @@ class CreationTest {
         platform.files["data/customers.template.json"] = "{}" to "etag-1"
 
         assertNull(session.tree().entry("data/customers.template.json"))
-        assertEquals(listOf("data/customers.template.json", "data/customers.xml"), runBlocking { existingTargets(request, api, session) })
+        assertEquals(listOf("data/customers.xml", "data/customers.template.json"), runBlocking { existingTargets(request, api, session) })
     }
 
     @Test

@@ -15,18 +15,19 @@ class CreationArchitectureTest {
     private val street = main.resolve("core/creation/street")
     private val container = main.resolve("core/creation/container")
     private val truck = main.resolve("ide/creation/truck")
-    private val compositionRoot = main.resolve("ide/creation/NewDatamimicFileAction.kt")
+    private val compositionRoots = listOf("NewDatamimicFileAction.kt", "GenerateModelFromFileAction.kt").map { main.resolve("ide/creation/$it") }
 
     @Test
-    fun `the scanned core folders exist, so no rule passes on an empty scan`() {
+    fun `the scanned folders and files exist, so no rule passes on an empty scan`() {
         assertTrue(sources(street).isNotEmpty())
         assertTrue(sources(container).isNotEmpty())
+        compositionRoots.forEach { assertTrue(it.path, it.isFile) }
     }
 
     @Test
-    fun `only the composition root names the containers`() {
+    fun `only the two composition roots name the containers`() {
         val offenders = (sources(File("src/main/kotlin")) + sources(File("src/main/java")))
-            .filter { !it.startsWith(container) && it != compositionRoot }
+            .filter { !it.startsWith(container) && it !in compositionRoots }
             .filter { "datamimic.core.creation.container" in it.readText() }
         assertEquals(emptyList<String>(), offenders.map { it.path })
     }

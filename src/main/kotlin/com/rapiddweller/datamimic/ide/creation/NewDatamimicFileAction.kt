@@ -4,14 +4,11 @@
 
 package com.rapiddweller.datamimic.ide.creation
 
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.serviceIfCreated
-import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -19,34 +16,27 @@ import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.withModalProgress
 import com.rapiddweller.datamimic.core.PlatformException
 import com.rapiddweller.datamimic.core.creation.container.templateFlows
-import com.rapiddweller.datamimic.core.creation.street.CreatedFile
 import com.rapiddweller.datamimic.core.creation.street.PlatformResult
 import com.rapiddweller.datamimic.core.creation.street.createOnPlatform
-import com.rapiddweller.datamimic.core.creation.street.pullCreated
 import com.rapiddweller.datamimic.core.creation.street.targetPaths
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.ide.ActiveProject
 import com.rapiddweller.datamimic.ide.Cancellation
 import com.rapiddweller.datamimic.ide.DatamimicPlatform
-import com.rapiddweller.datamimic.ide.NOTIFICATION_GROUP
 import com.rapiddweller.datamimic.ide.creation.truck.CreationDialog
 import com.rapiddweller.datamimic.ide.platformSession
 import com.rapiddweller.datamimic.ide.platformTargetError
 import com.rapiddweller.datamimic.ide.toNioPathOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-private val LOG = logger<NewDatamimicFileAction>()
 
 private const val TITLE = "New DATAMIMIC File"
 
 /**
  * Creates a file from a platform template in the selected folder of the window's DATAMIMIC project. This is the
- * composition root of the creation flows: no other class names the flow containers.
+ * composition root of the template flows. Only this class and [GenerateModelFromFileAction] name the flow containers.
  */
 class NewDatamimicFileAction : DumbAwareAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
@@ -119,30 +109,6 @@ private suspend fun create(project: Project, identity: FolderIdentity, dir: Stri
             // WHY: only an upload task outlives the wait; a template create answers at once.
             is PlatformResult.StillRunning -> return notify(project, "The platform still creates ${request.targetPaths().joinToString()}.")
         }
-        val created = try {
-            withModalProgress(owner, "Syncing ${paths.joinToString()}", Cancellation.cancellable()) { pullCreated(paths, session) }
-        } catch (e: CancellationException) {
-            // WHY: Cancel here stops only the wait. The file exists on the platform and the sync goes on.
-            currentCoroutineContext().ensureActive()
-            paths.map { CreatedFile(it, null) }
-        }
-        for (file in created) {
-            val local = file.local
-            if (local == null || !openCreatedFile(project, local)) {
-                notify(project, "Created ${file.path} on the platform. The local copy is still syncing.")
-            }
-        }
-        return
+        return pullAndOpen(project, owner, paths, session) { true }
     }
-}
-
-private fun notify(project: Project, text: String) {
-    NotificationGroupManager.getInstance().getNotificationGroup(NOTIFICATION_GROUP)
-        .createNotification(text, NotificationType.INFORMATION)
-        .notify(project)
-}
-
-private fun fail(project: Project, title: String, e: Exception) {
-    LOG.warn("$title: $e")
-    Messages.showErrorDialog(project, e.message ?: e.javaClass.simpleName, title)
 }
