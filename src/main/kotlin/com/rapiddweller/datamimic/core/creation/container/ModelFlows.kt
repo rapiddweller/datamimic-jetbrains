@@ -6,6 +6,7 @@ package com.rapiddweller.datamimic.core.creation.container
 
 import com.rapiddweller.datamimic.core.creation.Choice
 import com.rapiddweller.datamimic.core.creation.CreationFlow
+import com.rapiddweller.datamimic.core.creation.Field
 import com.rapiddweller.datamimic.core.creation.street.CreationRequest
 import com.rapiddweller.datamimic.core.creation.street.projectPath
 import com.rapiddweller.datamimic.core.workspace.UploadFileType
@@ -45,11 +46,11 @@ private val UPLOAD_NAME = Regex("[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?")
  *   in the project can be replaced by the new files.
  * @param csvSample the first lines of a CSV [source], for the delimiter.
  */
-fun uploadFlows(source: String, dir: String = "", sourceProjectPath: String? = null, csvSample: String = ""): List<CreationFlow> {
+fun modelFlows(source: String, dir: String = "", sourceProjectPath: String? = null, csvSample: String = ""): List<CreationFlow> {
     val fileName = source.substringAfterLast('/').substringAfterLast('\\')
     val name = fileName.substringBeforeLast('.')
-    val flow = { label: String, type: UploadFileType, choices: List<Choice>, template: String? ->
-        UploadFlow(label, type, choices, template, source, name, dir, sourceProjectPath)
+    val flow = { label: String, type: UploadFileType, fields: List<Field>, template: String? ->
+        UploadFlow(label, type, fields, template, source, name, dir, sourceProjectPath)
     }
     return when (fileName.substringAfterLast('.', "").lowercase()) {
         "json" -> listOf(
@@ -66,7 +67,7 @@ fun uploadFlows(source: String, dir: String = "", sourceProjectPath: String? = n
 }
 
 /** Why [name] cannot be the base name of the uploaded files, or null. */
-private fun uploadNameProblem(name: String): String? = when {
+internal fun uploadNameProblem(name: String): String? = when {
     name.isEmpty() -> "Enter a file name."
     !UPLOAD_NAME.matches(name) || ".." in name || "--" in name ->
         "Use only letters, digits, '.', '-' and '_'. Start and end with a letter or a digit. Do not use '..' or '--'."
@@ -77,7 +78,7 @@ private fun uploadNameProblem(name: String): String? = when {
 private class UploadFlow(
     override val label: String,
     private val type: UploadFileType,
-    override val choices: List<Choice>,
+    override val fields: List<Field>,
     private val template: String?,
     private val source: String,
     stem: String,
@@ -96,10 +97,10 @@ private class UploadFlow(
     private fun replacesSource(name: String) =
         sourceProjectPath != null && listOfNotNull(MODEL, template).any { projectPath(dir, name + it).equals(sourceProjectPath, ignoreCase = true) }
 
-    override fun toRequest(dir: String, name: String, choices: Map<String, String>): CreationRequest {
+    override fun toRequest(dir: String, name: String, values: Map<String, String>): CreationRequest {
         val fields = buildJsonObject {
             put("file_name", name)
-            for (choice in this@UploadFlow.choices) choice.valueIn(choices).takeIf { it != PROJECT_DEFAULT }?.let { put(choice.id, it) }
+            for (choice in fields.filterIsInstance<Choice>()) choice.valueIn(values).takeIf { it != PROJECT_DEFAULT }?.let { put(choice.id, it) }
         }
         val targets = listOfNotNull(MODEL, template).map { projectPath(dir, name + it) }
         return CreationRequest.FromUpload(dir, name, source, type, fields, targets)

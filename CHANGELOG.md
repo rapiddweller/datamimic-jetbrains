@@ -6,6 +6,8 @@
 
 - Generate a DATAMIMIC model from a JSON, XML or CSV file: choose *New > DATAMIMIC Model from File…* and select the file. The file can be anywhere on the disk. For a CSV file the dialog detects the delimiter and lets you change it, because the platform does not detect it. The platform writes the model, and with the template flow also a template, into the selected folder. The plugin asks before it replaces existing files, and the model opens when it is ready.
 
+- Migrate GWA and AMA files: choose *New > DATAMIMIC Migration…* and select an `.xlsm` workbook or an `.ama` archive. The dialog asks for the schema version (GWA) or the `.ini` file and the template folder (AMA). The plugin asks before it replaces files in the template folder, and the result opens when it is ready.
+
 ## [0.6.0]
 
 Create typed DATAMIMIC files from the IDE, and keep the language server connected.

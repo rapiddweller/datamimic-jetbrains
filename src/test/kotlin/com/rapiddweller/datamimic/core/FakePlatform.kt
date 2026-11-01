@@ -436,13 +436,19 @@ class FakePlatform : AutoCloseable {
         server.start()
     }
 
-    /** Writes the files the task makes and returns their paths: the template first, then the model. */
+    /** Writes the files the task makes and returns their paths: the template first, then the model. An AMA migration writes the model first. */
     private fun writeUploadOutputs(start: UploadTaskStart): List<String> {
         val base = Regex(""""file_name":"([^"]*)"""").find(start.customFields)!!.groupValues[1]
         val path = { suffix: String -> listOf(start.dir, base + suffix).filter(String::isNotEmpty).joinToString("/") }
         val outputs = when (start.fileType) {
             "json_generate_template" -> listOf(path(".template.json") to "{}", path(".xml") to "<setup/>")
             "xml_generate_template" -> listOf(path(".template.xml") to "<list/>", path(".xml") to "<setup/>")
+            "gwa_migration" -> listOf(path(".opctl.csv") to "id;op")
+            "ama_migration" -> {
+                val folder = Regex(""""templateDirectory":"([^"]*)"""").find(start.customFields)?.groupValues?.get(1) ?: "template"
+                val templates = listOf("a.edi", "b.edi").map { listOf(start.dir, folder, it).filter(String::isNotEmpty).joinToString("/") to "edi" }
+                listOf(path(".xml") to "<setup/>") + templates
+            }
             else -> listOf(path(".xml") to "<setup/>")
         }
         outputs.forEach { (file, content) -> files[file] = content to "etag-1" }
