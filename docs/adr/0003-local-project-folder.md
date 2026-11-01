@@ -76,8 +76,8 @@ flowchart LR
 - A pass hashes every file. That is cheap for descriptor projects, but slow for large data files. Caching by size and
   modification time would fix that.
 - Empty folders are not downloaded. An empty folder deleted outside the IDE stays on the platform.
-- The platform's file templates (*New File* from template) are no longer offered. The Project view's *New* actions
-  create plain files.
+- The platform's file templates were not offered at first. ADR 0006 offers them again through *New > DATAMIMIC File…*.
+  The other *New* actions of the Project view create plain files.
 - A file renamed outside the IDE is seen as a new file plus a missing one. So are deletes and renames made in the IDE
   while signed out: nothing records them until the next sign-in.
 - A user file ending in `.tmp` or `~` is never synced.

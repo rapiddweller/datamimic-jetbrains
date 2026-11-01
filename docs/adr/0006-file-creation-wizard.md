@@ -9,7 +9,7 @@
 A DATAMIMIC project is a set of typed files. Each type has a format: entity data (`.ent.csv`), weighting
 (`.wgt.csv`), scripts (`.scr.py`, `.scr.sql`), templates (`.template.json`, `.template.xml`), operate files
 (`.opctl.csv`), properties, and the model (`.xml`). A user who writes such a file from an empty editor must know the
-format. A wrong format shows only when a generation run fails.
+format. A wrong format can show only when a generation run fails.
 
 The platform web UI has a *File Wizard*. The user picks a file type and gets a new file with valid example content. The
 wizard can also turn an existing JSON, XML or CSV file into a DATAMIMIC model. The IDE has no such function. ADR 0003
@@ -17,10 +17,10 @@ removed the platform's file templates, so the Project view's *New* actions creat
 
 Business goal:
 
-- A new user creates a first valid file in seconds and starts from working example content. This shortens the way to
+- A new user creates a first valid file quickly and starts from working example content. This shortens the way to
   the first successful generation run.
 - A user who works in the IDE does not switch to the browser for this task. A customer reported that the web UI makes
-  it easier to find what to add, and that the IDE lacks this.
+  it easier to find what to add, because it shows only the valid choices.
 - The IDE and the web UI create the same files from the same templates. The platform owns the templates, so both
   stay equal without a second copy.
 
