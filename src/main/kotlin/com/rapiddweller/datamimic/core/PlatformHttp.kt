@@ -121,7 +121,8 @@ private data class PlatformErrorBody(
     }
 }
 
-class PlatformException(val status: Int, val code: PlatformErrorCode, message: String) : RuntimeException(message)
+/** [detail] is the platform's own text; [message] adds the request for logs. */
+class PlatformException(val status: Int, val code: PlatformErrorCode, val detail: String, message: String = detail) : RuntimeException(message)
 
 class SessionExpiredException : RuntimeException("Your DATAMIMIC session has ended. Sign in again.")
 
@@ -257,7 +258,7 @@ internal fun PlatformResponse.orThrow(method: HttpMethod, path: String): Platfor
     if (status in 200..299) return this
     val error = runCatching { json.decodeFromString<PlatformErrorBody>(body) }.getOrNull()
     val detail = error?.message() ?: body.take(200).ifBlank { "HTTP $status" }
-    throw PlatformException(status, error?.code ?: PlatformErrorCode.UNKNOWN, "$detail (${method.name} $path → $status)")
+    throw PlatformException(status, error?.code ?: PlatformErrorCode.UNKNOWN, detail, "$detail (${method.name} $path → $status)")
 }
 
 internal fun encode(value: String): String = URLEncoder.encode(value, UTF_8)

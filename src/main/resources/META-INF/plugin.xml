@@ -51,6 +51,11 @@
             <add-to-group group-id="WelcomeScreen.QuickStart" anchor="last"/>
             <add-to-group group-id="FileOpenGroup" anchor="last"/>
         </action>
+        <action id="Datamimic.NewFile" class="com.rapiddweller.datamimic.ide.creation.NewDatamimicFileAction"
+                text="DATAMIMIC File…" icon="/icons/datamimic.svg"
+                description="Create a DATAMIMIC file from a platform template, such as entity data, weighting or a script">
+            <add-to-group group-id="NewGroup" anchor="last"/>
+        </action>
     </actions>
 
     <applicationListeners>

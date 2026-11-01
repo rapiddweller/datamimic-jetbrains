@@ -22,6 +22,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.util.EnvironmentUtil
+import com.rapiddweller.datamimic.core.PlatformOrigin
 import com.rapiddweller.datamimic.core.mcp.AgentConnection
 import com.rapiddweller.datamimic.core.mcp.AiAssistantAgent
 import com.rapiddweller.datamimic.core.mcp.ClaudeCodeAgent
@@ -287,6 +288,36 @@ class ActiveProject(private val project: Project, private val scope: CoroutineSc
 }
 
 internal fun Project.activeProject(): ActiveProject = getService(ActiveProject::class.java)
+
+/** Why an action for the platform project [expected] cannot run in this window now, or null when it can. */
+internal fun platformTargetError(
+    expected: FolderIdentity,
+    actual: FolderIdentity?,
+    signedInOrigin: PlatformOrigin?,
+    session: WorkspaceSession?,
+): String? = when {
+    actual == null -> "Open the DATAMIMIC project first."
+    actual.origin != expected.origin || actual.projectId != expected.projectId -> "This window has another DATAMIMIC project open."
+    signedInOrigin != expected.origin -> "Sign in to ${expected.origin.value} first."
+    session == null -> "DATAMIMIC is not connected to this project."
+    else -> null
+}
+
+internal fun platformTargetError(project: Project, identity: FolderIdentity): String? {
+    val active = project.activeProject()
+    return platformTargetError(
+        identity,
+        active.identity,
+        (DatamimicPlatform.getInstance().state.value as? AuthState.SignedIn)?.origin,
+        active.session(),
+    )
+}
+
+/** The window's session for [identity]; throws with the message of [platformTargetError] when there is none. */
+internal fun platformSession(project: Project, identity: FolderIdentity): WorkspaceSession {
+    platformTargetError(project, identity)?.let(::error)
+    return checkNotNull(project.activeProject().session())
+}
 
 /** Discovers agents from the actual user environment; callers provide paths so startup behavior is testable. */
 internal fun discoverSessionAgents(projectDir: Path, path: String?): List<McpAgent> = buildList {

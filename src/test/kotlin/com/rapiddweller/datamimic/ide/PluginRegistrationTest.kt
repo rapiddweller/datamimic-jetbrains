@@ -4,6 +4,7 @@
 
 package com.rapiddweller.datamimic.ide
 
+import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
@@ -17,6 +18,7 @@ import com.intellij.openapi.wm.WelcomeTabFactory
 import com.intellij.platform.lsp.api.LspServerSupportProvider
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.ui.EditorNotificationProvider
+import com.rapiddweller.datamimic.ide.creation.NewDatamimicFileAction
 import com.rapiddweller.datamimic.ide.editing.PlatformFileBanner
 import com.rapiddweller.datamimic.ide.editing.PlatformWritingAccess
 import com.rapiddweller.datamimic.ide.editing.ProjectFolderExcludePolicy
@@ -39,6 +41,9 @@ class PluginRegistrationTest : BasePlatformTestCase() {
         assertTrue(StatusBarWidgetFactory.EP_NAME.extensionList.any { it is LspStatusWidgetFactory })
         assertTrue(WelcomeTabFactory.WELCOME_TAB_FACTORY_EP.extensionList.any { it is DatamimicWelcomeTabFactory })
         assertInstanceOf(ActionManager.getInstance().getAction("Datamimic.OpenPlatformProject"), OpenPlatformProjectAction::class.java)
+        val newFile = ActionManager.getInstance().getAction("Datamimic.NewFile")
+        assertInstanceOf(newFile, NewDatamimicFileAction::class.java)
+        assertTrue("the action sits in the New menu", (ActionManager.getInstance().getAction("NewGroup") as ActionGroup).getChildren(null).contains(newFile))
         assertTrue(WritingAccessProvider.EP.getExtensions(project).any { it is PlatformWritingAccess })
         assertTrue(EditorNotificationProvider.EP_NAME.getExtensions(project).any { it is PlatformFileBanner })
         assertTrue(Configurable.PROJECT_CONFIGURABLE.getExtensions(project).any { it.id == "datamimic.aiAssistant" })
