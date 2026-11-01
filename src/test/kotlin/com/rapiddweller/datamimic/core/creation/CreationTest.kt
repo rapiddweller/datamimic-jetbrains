@@ -213,6 +213,19 @@ class CreationTest {
     }
 
     @Test
+    fun `a name that would replace the source file is refused, and the initial name avoids it`() {
+        val xml = uploadFlows("/data/customers.xml")
+
+        assertEquals(listOf("customers-model", "customers-model"), xml.map { it.initialName })
+        xml.forEach { assertNotNull(it.nameProblem("customers")) }
+        assertNull(xml.first().nameProblem("customers-model"))
+        assertNotNull("case does not matter", uploadFlows("/data/Customers.XML").first().nameProblem("customers"))
+        val template = uploadFlows("/data/orders.template.xml")
+        assertEquals("orders.template-model", template.first().initialName)
+        assertNull("a JSON source never meets its own model name", uploadFlows("/data/customers.json").first().nameProblem("customers"))
+    }
+
+    @Test
     fun `only the model flows of JSON and XML offer the generation mode, with mirror first`() {
         val modes = (uploadFlows("a.json") + uploadFlows("a.xml") + uploadFlows("a.csv")).filter { it.choices.isNotEmpty() }
 

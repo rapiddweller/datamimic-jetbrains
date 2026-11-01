@@ -59,12 +59,19 @@ private class UploadFlow(
     private val withMode: Boolean,
     private val template: String?,
     private val source: String,
-    override val initialName: String,
+    stem: String,
 ) : CreationFlow {
     override val id = "upload." + type.wire
     override val choices = if (withMode) listOf(GENERATION_MODE) else emptyList()
+    private val sourceName = source.substringAfterLast('/').substringAfterLast('\\')
 
-    override fun nameProblem(name: String): String? = uploadNameProblem(name)
+    // WHY: an XML source such as customers.xml would get the model customers.xml, and the platform would replace the source.
+    override val initialName = if (replacesSource(stem)) "$stem-model" else stem
+
+    override fun nameProblem(name: String): String? =
+        uploadNameProblem(name) ?: if (replacesSource(name)) "This name would replace the source file $sourceName." else null
+
+    private fun replacesSource(name: String) = listOfNotNull(MODEL, template).any { (name + it).equals(sourceName, ignoreCase = true) }
 
     override fun toRequest(dir: String, name: String, choices: Map<String, String>): CreationRequest {
         val fields = buildJsonObject {
