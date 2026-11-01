@@ -85,7 +85,8 @@ sealed interface RequestBody {
 
     data class Form(val fields: Map<String, String>) : RequestBody
 
-    class Multipart(val fileName: String, val bytes: ByteArray) : RequestBody
+    /** The text [fields] go first, then the file part named `file`. */
+    class Multipart(val fileName: String, val bytes: ByteArray, val fields: Map<String, String> = emptyMap()) : RequestBody
 }
 
 /** Error codes the client reacts to. Anything else decodes as [UNKNOWN]. */
@@ -101,6 +102,7 @@ enum class PlatformErrorCode {
     FILE_LOCK_OWNED_BY_OTHER,
     FILE_LOCK_SUPERSEDED,
     LSP_DISABLED,
+    UPLOAD_GENERATE_ALREADY_RUNNING,
     UNKNOWN,
 }
 
@@ -139,6 +141,9 @@ internal class PlatformSessionFence(private val sessions: SessionService, privat
 }
 
 internal val DOWNLOAD_TIMEOUT: Duration = Duration.ofMinutes(10)
+
+// WHY: an upload can be 100 MB, and 60 s is too short on a slow link.
+private val UPLOAD_TIMEOUT: Duration = Duration.ofMinutes(5)
 
 /** Authenticated transport of one IDE process: session cookie, platform Origin and client binding on every request. */
 class PlatformHttp(
@@ -231,7 +236,7 @@ internal fun HttpClient.sendPlatformRequest(
     headers: Map<PlatformHeader, String>,
 ): PlatformResponse {
     val builder = HttpRequest.newBuilder(URI(origin.value + path))
-        .timeout(method.timeout)
+        .timeout(if (body is RequestBody.Multipart) UPLOAD_TIMEOUT else method.timeout)
         .header(PlatformHeader.ORIGIN.wireName, origin.value)
     headers.forEach { (name, value) -> builder.header(name.wireName, value) }
     val publisher = when (body) {
@@ -267,7 +272,10 @@ internal fun encode(value: String): String = URLEncoder.encode(value, UTF_8)
 internal fun encodePath(path: String): String = path.split("/").joinToString("/") { encode(it).replace("+", "%20") }
 
 private fun multipart(boundary: String, body: RequestBody.Multipart): ByteArray {
-    val head = "--$boundary\r\n" +
+    val fields = body.fields.entries.joinToString("") { (name, value) ->
+        "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n"
+    }
+    val head = fields + "--$boundary\r\n" +
         "Content-Disposition: form-data; name=\"file\"; filename=\"${body.fileName.replace("\"", "")}\"\r\n" +
         "Content-Type: application/octet-stream\r\n\r\n"
     return head.toByteArray(UTF_8) + body.bytes + "\r\n--$boundary--\r\n".toByteArray(UTF_8)

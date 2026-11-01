@@ -6,14 +6,25 @@ package com.rapiddweller.datamimic.core
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import kotlinx.serialization.json.JsonPrimitive
 import java.net.InetSocketAddress
 import java.net.URLDecoder
+import java.nio.charset.StandardCharsets.ISO_8859_1
 import java.nio.charset.StandardCharsets.UTF_8
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+
+/** One accepted start of an upload task, as the platform read it. */
+class UploadTaskStart(val fileType: String, val dir: String, val customFields: String, val sourceName: String, val bytes: ByteArray) {
+    val size: Int get() = bytes.size
+}
+
+private class FormPart(val name: String, val fileName: String?, val bytes: ByteArray) {
+    val text: String get() = String(bytes, UTF_8)
+}
 
 /**
  * In-process stand-in that enforces the platform rules the plugin depends on: the session cookie, the exact Origin on
@@ -65,6 +76,19 @@ class FakePlatform : AutoCloseable {
     val deletes = CopyOnWriteArrayList<String>()
     val moves = CopyOnWriteArrayList<Pair<String, String>>()
     val directories = CopyOnWriteArrayList<String>()
+
+    /** Accepted starts of the upload task; task ids are t1, t2, ... in this order. */
+    val uploadTaskStarts = CopyOnWriteArrayList<UploadTaskStart>()
+
+    /** How many polls of a task answer "running" before its result. */
+    @Volatile var uploadTaskPolls = 1
+
+    /** When set, every task ends with returncode 1 and this text, and writes no file. */
+    @Volatile var uploadTaskFailure: String? = null
+
+    /** When set, a start answers this (status, code, detail) and records nothing. */
+    @Volatile var uploadStartRefusal: Triple<Int, String, String>? = null
+    private val uploadPolls = ConcurrentHashMap<String, Int>()
 
     /** Files shared from a global project: listed read-only. */
     val readOnly: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -150,6 +174,35 @@ class FakePlatform : AutoCloseable {
                 200,
                 """{"templates":[{"label":"Ent Csv (.ent.csv)","extension":".ent.csv"},{"label":"Scr Py (.scr.py)","extension":".scr.py"}]}""",
             )
+        }
+        authenticated("/api/v2/projects/p1/workspace/tasks/upload") { exchange ->
+            if (exchange.requestMethod != "POST") return@authenticated exchange.error(405, "METHOD_NOT_ALLOWED", "Use POST")
+            val parts = exchange.multipart()
+            val text = { name: String -> parts.first { it.name == name }.text }
+            val file = parts.first { it.name == "file" }
+            uploadStartRefusal?.let { (status, code, detail) -> return@authenticated exchange.error(status, code, detail) }
+            uploadTaskStarts += UploadTaskStart(text("file_type"), text("file_dir"), text("custom_fields"), file.fileName.orEmpty(), file.bytes)
+            val taskId = "t${uploadTaskStarts.size}"
+            exchange.respond(
+                202,
+                """{"returncode":3,"message":"Create-from-upload queued. Poll task status for completion.","task_id":"$taskId","httpcode":202,""" +
+                    """"data":{"task_id":"$taskId","status":"QUEUED","file_type":"${text("file_type")}","file_uris":[],"target_key":"x"}}""",
+            )
+        }
+        authenticated("/api/v2/projects/p1/workspace/tasks/upload/") { exchange ->
+            val prefix = "/api/v2/projects/p1/workspace/tasks/upload/"
+            val taskId = exchange.projectPath(prefix)
+            val start = taskId.removePrefix("t").toIntOrNull()?.let { uploadTaskStarts.getOrNull(it - 1) }
+                ?: return@authenticated exchange.error(404, "UPLOAD_GENERATE_TASK_NOT_FOUND", "Task not found")
+            if (uploadPolls.merge(taskId, 1, Int::plus)!! <= uploadTaskPolls) {
+                return@authenticated exchange.respond(200, """{"returncode":3,"message":"Running","task_id":"$taskId","data":{"task_id":"$taskId","status":"RUNNING","file_uris":[]}}""")
+            }
+            uploadTaskFailure?.let {
+                val text = JsonPrimitive(it)
+                return@authenticated exchange.respond(200, """{"returncode":1,"message":$text,"task_id":"$taskId","data":{"task_id":"$taskId","status":"FAILURE","file_uris":[],"error":$text}}""")
+            }
+            val paths = writeUploadOutputs(start)
+            exchange.respond(200, """{"returncode":0,"message":"Done","task_id":"$taskId","data":{"task_id":"$taskId","status":"SUCCESS","file_uris":${paths.joinToString(",", "[", "]") { "\"$it\"" }}}}""")
         }
         // WHY: the longer path wins over the "files/" prefix below, which takes any non-GET request as a file write.
         authenticated("/api/v2/projects/p1/workspace/files/from-template") { exchange ->
@@ -374,6 +427,19 @@ class FakePlatform : AutoCloseable {
         server.start()
     }
 
+    /** Writes the files the task makes and returns their paths: the template first, then the model. */
+    private fun writeUploadOutputs(start: UploadTaskStart): List<String> {
+        val base = Regex(""""file_name":"([^"]*)"""").find(start.customFields)!!.groupValues[1]
+        val path = { suffix: String -> listOf(start.dir, base + suffix).filter(String::isNotEmpty).joinToString("/") }
+        val outputs = when (start.fileType) {
+            "json_generate_template" -> listOf(path(".template.json") to "{}", path(".xml") to "<setup/>")
+            "xml_generate_template" -> listOf(path(".template.xml") to "<list/>", path(".xml") to "<setup/>")
+            else -> listOf(path(".xml") to "<setup/>")
+        }
+        outputs.forEach { (file, content) -> files[file] = content to "etag-1" }
+        return outputs.map { it.first }
+    }
+
     private fun tokenJson(name: String, value: Pair<String, String>) =
         """{"tc_creation":"2026-09-23T00:00:00","name":"$name","scopes":["api"],"expiration_date":"${value.second}","token":"${value.first}"}"""
 
@@ -407,6 +473,19 @@ class FakePlatform : AutoCloseable {
 private fun HttpExchange.projectPath(prefix: String): String = requestURI.path.removePrefix(prefix)
 
 private fun HttpExchange.body(): String = requestBody.readAllBytes().toString(UTF_8)
+
+/** Splits a multipart body on the boundary of the Content-Type header. Latin-1 keeps every byte of the file part. */
+private fun HttpExchange.multipart(): List<FormPart> {
+    val boundary = requestHeaders.getFirst("Content-Type").substringAfter("boundary=")
+    return requestBody.readAllBytes().toString(ISO_8859_1).split("--$boundary").drop(1).filterNot { it.startsWith("--") }.map { raw ->
+        val (head, content) = raw.removePrefix("\r\n").split("\r\n\r\n", limit = 2)
+        FormPart(
+            Regex("""; name="([^"]*)"""").find(head)!!.groupValues[1],
+            Regex("""filename="([^"]*)"""").find(head)?.groupValues?.get(1),
+            content.removeSuffix("\r\n").toByteArray(ISO_8859_1),
+        )
+    }
+}
 
 private fun HttpExchange.form(): Map<String, String> = body().split("&").associate {
     val (key, value) = it.split("=", limit = 2)
