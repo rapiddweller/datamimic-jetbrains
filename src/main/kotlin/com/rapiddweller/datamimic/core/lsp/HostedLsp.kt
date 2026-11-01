@@ -21,6 +21,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import kotlinx.serialization.json.jsonObject
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
@@ -85,6 +86,11 @@ class LspInit(val rootUri: String, private val body: JsonObject) {
 
 @Serializable
 private class LspInitIdentity(@SerialName("project_id") val projectId: String, @SerialName("root_uri") val rootUri: String)
+
+/** Whether the same platform call can work later: no network, or a platform that is down. A 4xx answer does not change. */
+internal fun Exception.isTransient(): Boolean = this is IOException || (this is PlatformException && status >= SERVER_ERROR)
+
+private const val SERVER_ERROR = 500
 
 class LspApi(private val http: PlatformHttp) {
     /** Turns the project's language server on or off for everyone; the platform merges this into the project config. */

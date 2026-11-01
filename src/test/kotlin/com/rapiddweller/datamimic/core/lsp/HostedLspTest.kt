@@ -9,6 +9,7 @@ import com.rapiddweller.datamimic.core.FakeWebSocketServer
 import com.rapiddweller.datamimic.core.PlatformErrorCode
 import com.rapiddweller.datamimic.core.PlatformException
 import com.rapiddweller.datamimic.core.PlatformHttp
+import com.rapiddweller.datamimic.core.SessionExpiredException
 import com.rapiddweller.datamimic.core.SessionService
 import com.rapiddweller.datamimic.core.StoredSession
 import com.rapiddweller.datamimic.core.json
@@ -23,6 +24,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.BufferedInputStream
+import java.io.IOException
 import java.net.InetAddress
 import java.net.Socket
 import java.net.http.HttpClient
@@ -198,6 +200,16 @@ class HostedLspTest {
             assertEquals(LspLink.CLOSED, links.poll(5, TimeUnit.SECONDS))
             assertFalse(rejected.await(300, TimeUnit.MILLISECONDS))
         }
+    }
+
+    @Test
+    fun `only a missing network or a platform that is down is worth another try`() {
+        assertTrue(IOException("no route").isTransient())
+        assertTrue(PlatformException(503, PlatformErrorCode.UNKNOWN, "down").isTransient())
+        assertFalse("access revoked", PlatformException(403, PlatformErrorCode.UNKNOWN, "denied").isTransient())
+        assertFalse("project deleted", PlatformException(404, PlatformErrorCode.NOT_FOUND, "gone").isTransient())
+        assertFalse(SessionExpiredException().isTransient())
+        assertFalse(IllegalStateException("another project").isTransient())
     }
 
     @Test

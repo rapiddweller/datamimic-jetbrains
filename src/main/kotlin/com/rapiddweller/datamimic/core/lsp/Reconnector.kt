@@ -7,6 +7,7 @@ package com.rapiddweller.datamimic.core.lsp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 /**
@@ -20,6 +21,7 @@ class Reconnector(
 ) {
     private var attempt = 0
     private var pending: Job? = null
+    private var connecting = false
 
     /** Whether a connection was lost and has not opened again yet. */
     @get:Synchronized
@@ -32,13 +34,22 @@ class Reconnector(
         attempt++
         pending = scope.launch {
             delay(wait)
-            connect()
+            synchronized(this@Reconnector) {
+                ensureActive()
+                connecting = true
+            }
+            try {
+                connect()
+            } finally {
+                synchronized(this@Reconnector) { connecting = false }
+            }
         }
     }
 
-    /** The connection is open, or a retry would not help: forget the failures but let a running [connect] finish. */
+    /** The connection is open, or a retry would not help: forget the failures and the wait, but let a running [connect] finish. */
     @Synchronized
     fun reset() {
+        if (!connecting) pending?.cancel()
         attempt = 0
     }
 

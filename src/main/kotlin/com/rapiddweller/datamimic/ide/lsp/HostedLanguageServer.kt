@@ -30,6 +30,7 @@ import com.rapiddweller.datamimic.core.lsp.LspBridge
 import com.rapiddweller.datamimic.core.lsp.LspInit
 import com.rapiddweller.datamimic.core.lsp.LspLink
 import com.rapiddweller.datamimic.core.lsp.Reconnector
+import com.rapiddweller.datamimic.core.lsp.isTransient
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.core.workspace.ProjectFolder
 import com.rapiddweller.datamimic.ide.AuthState
@@ -184,10 +185,12 @@ class HostedLanguageServer(private val project: Project, private val scope: Coro
             if (e is PlatformException && e.code == PlatformErrorCode.LSP_DISABLED) {
                 reconnector.reset()
                 stateFlow.value = LspState(LspStatus.TURNED_OFF, "Turned off for ${target.identity.projectName} on the platform.")
-            } else if (reconnector.retrying) {
+            } else if (reconnector.retrying && e.isTransient()) {
                 stateFlow.value = LspState(LspStatus.RECONNECTING, "$reason Trying again.")
                 reconnector.retry()
             } else {
+                // WHY: an answer such as 403 or 404 does not change by asking again every minute.
+                reconnector.reset()
                 stateFlow.value = LspState(LspStatus.FAILED, reason)
             }
             return stateFlow.value.status

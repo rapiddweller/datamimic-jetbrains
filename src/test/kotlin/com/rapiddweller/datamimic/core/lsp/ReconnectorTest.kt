@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -56,6 +57,51 @@ class ReconnectorTest {
         reconnector.retry()
 
         assertTrue("the second retry waited for the second step", connects.poll(1, TimeUnit.SECONDS) != null)
+    }
+
+    @Test
+    fun `reset cancels a retry that is waiting, because the connection came back`() {
+        val reconnector = reconnector(100)
+        reconnector.retry()
+
+        reconnector.reset()
+
+        assertFalse(reconnector.retrying)
+        assertNull(connects.poll(400, TimeUnit.MILLISECONDS))
+    }
+
+    @Test
+    fun `reset lets a connect that is already running finish`() {
+        val started = LinkedBlockingQueue<Unit>()
+        val finished = LinkedBlockingQueue<Unit>()
+        val reconnector = Reconnector(scope, listOf(10)) {
+            started.add(Unit)
+            delay(300)
+            finished.add(Unit)
+        }
+        reconnector.retry()
+        started.poll(5, TimeUnit.SECONDS)!!
+
+        reconnector.reset()
+
+        assertTrue("the running connect was not cancelled", finished.poll(5, TimeUnit.SECONDS) != null)
+    }
+
+    @Test
+    fun `stop also cancels a connect that is already running`() {
+        val started = LinkedBlockingQueue<Unit>()
+        val finished = LinkedBlockingQueue<Unit>()
+        val reconnector = Reconnector(scope, listOf(10)) {
+            started.add(Unit)
+            delay(300)
+            finished.add(Unit)
+        }
+        reconnector.retry()
+        started.poll(5, TimeUnit.SECONDS)!!
+
+        reconnector.stop()
+
+        assertNull(finished.poll(800, TimeUnit.MILLISECONDS))
     }
 
     @Test
