@@ -101,9 +101,11 @@ class LspBridge(
             val status = e.handshakeStatus()
             log("The platform did not open the language server connection: ${status?.let { "HTTP $it" } ?: e.cause?.toString()}")
             // WHY: the platform refuses before accepting, which reaches the client as an HTTP status, not a close code.
+            // Any other failure (no network, a restarting platform) is a lost link that the caller can retry.
             when (status) {
                 UNAUTHORIZED -> sessions.expire(session)
                 FORBIDDEN -> onRejected()
+                else -> onLink(LspLink.CLOSED)
             }
             return
         }

@@ -43,8 +43,12 @@ flowchart LR
   (uvicorn), not as a close code; a close with 1008 can still come mid-session. Both stop the server with a notice
   and *Try Again*, so the IDE does not keep reconnecting on its own. A 401 ends the session as everywhere else.
   Signing out, a closed window and plugin unload stop the server too.
+- **Lost connection.** Any other end of the connection (a network change, sleep, a restarting platform) shows
+  *reconnecting* in the widget. The plugin then runs the normal start again after 2, 5, 15 and then every 60 seconds,
+  until the connection opens. A refusal, a 4xx answer to the start request, signing out, *Check Again* and turning the
+  server on or off stop the retries. A connection that opens while a retry waits cancels that retry.
 - **Status and switch.** A status bar widget shows the server's state (signed out, starting, off, ready, connected,
-  error) with the reason as tooltip. From it, the server can be turned on or off for the project through the platform's
+  reconnecting, error) with the reason as tooltip. From it, the server can be turned on or off for the project through the platform's
   project API (`PUT /api/v2/projects/<id>` with `config.lsp.enabled`, merged like the platform UI and VS Code do).
   Turning it on waits up to 45 seconds, because each platform process caches "off" for 30 seconds.
 - **Visible failures.** Every reason the server does not start or ends shows in the widget, and is written to the IDE
