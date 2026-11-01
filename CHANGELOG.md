@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- Create DATAMIMIC files from the platform's templates: *New > DATAMIMIC File…* in the Project view. The dialog lists the file types that the platform offers. The new file opens with its example content.
 - Fixed: the language server connects again on its own after a network change or sleep. The status bar shows *reconnecting* meanwhile.
 
 ## [0.5.0]
