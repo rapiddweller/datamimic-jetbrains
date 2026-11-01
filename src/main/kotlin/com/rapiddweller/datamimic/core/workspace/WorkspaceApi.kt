@@ -70,6 +70,10 @@ data class WorkspaceTree(
 
 class FileContent(val bytes: ByteArray, val etag: String?)
 
+/** A file type the platform creates from a template. [extension] includes the leading dot, such as `.ent.csv`. */
+@Serializable
+data class FileTemplate(val label: String, val extension: String)
+
 /** First-party workspace routes; ETag and lock generation fence every change to an existing file. */
 class WorkspaceApi(private val http: PlatformHttp) {
     fun tree(projectId: String): WorkspaceTree {
@@ -91,6 +95,21 @@ class WorkspaceApi(private val http: PlatformHttp) {
             RequestBody.Multipart(ref.name, bytes),
             mapOf(PlatformHeader.IF_NONE_MATCH to "*"),
         )
+    }
+
+    fun templates(projectId: String): List<FileTemplate> =
+        json.decodeFromString<TemplateList>(http.getJson("${base(projectId)}/templates")).templates
+
+    /** Creates a file from a platform template, never over an existing one. Returns the project path the platform chose. */
+    fun createFromTemplate(projectId: String, dir: String, name: String, extension: String): String {
+        val body = json.encodeToString(FromTemplateRequest.serializer(), FromTemplateRequest(extension, name, dir))
+        val response = http.send(
+            HttpMethod.POST,
+            "${base(projectId)}/files/from-template",
+            RequestBody.Json(body),
+            mapOf(PlatformHeader.IF_NONE_MATCH to "*"),
+        )
+        return json.decodeFromString<CreatedFile>(response.body).path
     }
 
     fun update(ref: DocumentRef, bytes: ByteArray, etag: String, lockGeneration: String) {
@@ -145,3 +164,16 @@ private data class MoveRequest(
     @SerialName("destination_path") val destinationPath: String,
     val kind: EntryKind,
 )
+
+@Serializable
+private data class TemplateList(val templates: List<FileTemplate>)
+
+@Serializable
+private data class FromTemplateRequest(
+    @SerialName("file_extension") val fileExtension: String,
+    @SerialName("file_name") val fileName: String,
+    @SerialName("file_dir") val fileDir: String,
+)
+
+@Serializable
+private data class CreatedFile(val path: String)

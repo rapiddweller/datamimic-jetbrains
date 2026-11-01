@@ -61,6 +61,7 @@ class FakePlatform : AutoCloseable {
     val files: MutableMap<String, Pair<String, String>> = ConcurrentHashMap(mapOf("model/datamimic.xml" to ("<setup/>" to "etag-1")))
     val uploads = CopyOnWriteArrayList<Triple<String, String?, String?>>()
     val creates = CopyOnWriteArrayList<String>()
+    val templateCreates = CopyOnWriteArrayList<String>()
     val deletes = CopyOnWriteArrayList<String>()
     val moves = CopyOnWriteArrayList<Pair<String, String>>()
     val directories = CopyOnWriteArrayList<String>()
@@ -140,6 +141,27 @@ class FakePlatform : AutoCloseable {
                 """{"path":"$path","workspace_path":"$path","kind":"file","source":"$source","source_project_id":"p1","source_project_name":"P1","hidden":false,"readonly":${path in readOnly},"size":1,"modified_at":null,"etag":"${value.second}"}"""
             }
             exchange.respond(200, """{"project_id":"p1","revision":"r1","entries":[$entries]}""")
+        }
+        authenticated("/api/v2/projects/p1/workspace/templates") { exchange ->
+            exchange.respond(
+                200,
+                """{"templates":[{"label":"Ent Csv (.ent.csv)","extension":".ent.csv"},{"label":"Scr Py (.scr.py)","extension":".scr.py"}]}""",
+            )
+        }
+        // WHY: the longer path wins over the "files/" prefix below, which takes any non-GET request as a file write.
+        authenticated("/api/v2/projects/p1/workspace/files/from-template") { exchange ->
+            if (exchange.requestMethod != "POST") return@authenticated exchange.error(405, "METHOD_NOT_ALLOWED", "Use POST")
+            if (exchange.requestHeaders.getFirst("If-None-Match") != "*") {
+                return@authenticated exchange.error(428, "PRECONDITION_REQUIRED", "Create needs If-None-Match: *")
+            }
+            val body = exchange.body()
+            val field = { name: String -> Regex(""""$name":"([^"]*)"""").find(body)!!.groupValues[1] }
+            val (dir, extension) = field("file_dir") to field("file_extension")
+            val path = listOf(dir, field("file_name") + extension).filter(String::isNotEmpty).joinToString("/")
+            if (path in files) return@authenticated exchange.error(412, "FILE_DESTINATION_EXISTS", "File already exists")
+            templateCreates += path
+            files[path] = (if (extension == ".ent.csv") "name|surname|age\nPaul|Max|1" else "import os") to "etag-1"
+            exchange.respond(200, """{"path":"$path","action":"created"}""")
         }
         authenticated("/api/v2/projects/p1/workspace/files/") { exchange ->
             val path = exchange.projectPath("/api/v2/projects/p1/workspace/files/")
