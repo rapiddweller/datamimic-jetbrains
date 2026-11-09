@@ -4,16 +4,19 @@
 
 ## [Unreleased]
 
+## [0.7.0]
+
+Make models from files, migrate GWA and AMA files, and work with nested artifacts, task comments and the Operate API.
+
+- Generate a DATAMIMIC model from a JSON, XML or CSV file: choose *New > DATAMIMIC Model from File…* and select the file. The file can be anywhere on the disk. For a CSV file the dialog detects the delimiter and lets you change it, because the platform does not detect it. The platform writes the model, and with the template flow also a template, into the selected folder. The plugin asks before it replaces existing files, and the model opens when it is ready.
+- Migrate GWA and AMA files: choose *New > DATAMIMIC Migration…* and select an `.xlsm` workbook or an `.ama` archive. The dialog asks for the schema version (GWA) or the `.ini` file and the template folder (AMA). The plugin asks before it replaces files in the template folder, and the result opens when it is ready.
+- Show artifacts in subfolders. The artifact list shows the relative path, such as `xml/order.xml`, with the size. Before, one nested artifact made the whole list fail with "The platform returned invalid artifact metadata." You can download a nested artifact, and the ZIP download is unchanged. The plugin reads the exact `path` from Platform 4.2.0, so a name with a space or a special character keeps its form.
+- Save a nested artifact into the matching subfolder. **Save / Open** asks for a folder and puts the file below it. The plugin asks before it replaces a file. A flat artifact keeps the save dialog. The plugin refuses an unsafe path: an empty, `.` or `..` segment, a backslash, a control character, or more than 32 segments. It also refuses a path that leaves the chosen folder, for example through a symbolic link.
 - Add a comment to a generation task. The **Generation Tasks** list shows the comment in a column next to each task. Select a task to edit its comment below the details. The editor shows the length as `n/500`, the last editor and the edit time. Comments need Platform 4.2.0.
 - The **Save** button of the comment editor is disabled while the text is unchanged. The plugin trims the text before it sends it. A blank text removes the comment. If a save fails, the draft stays in the editor and the editor shows the error. A draft also stays when you select another task and come back.
 - Build a `curl` command for the Artifact Operate API. Select an XML or JSON artifact and choose **Build Operate curl…**. Choose the task (the selected task or `latest`), the action for an operation without a match, and the rows with their operations. A helper builds each operation from the list of the platform reference.
 - The **Build Operate curl** dialog shows the command and the request body at once. **Copy** copies the command, and **Save as request.json…** saves the body. The command reads the token from `$PROJECT_TOKEN`. The plugin never writes a token into the command, the clipboard, a file or the log.
 - **Run now** in the same dialog sends the call with the session of the IDE and shows the response. It needs no token. The Operate API needs Platform 4.2.0.
-- Show artifacts in subfolders. The artifact list shows the relative path, such as `xml/order.xml`, with the size. Before, one nested artifact made the whole list fail with "The platform returned invalid artifact metadata." You can download a nested artifact, and the ZIP download is unchanged. The plugin reads the exact `path` from Platform 4.2.0, so a name with a space or a special character keeps its form.
-- Save a nested artifact into the matching subfolder. **Save / Open** asks for a folder and puts the file below it. The plugin asks before it replaces a file. A flat artifact keeps the save dialog. The plugin refuses an unsafe path: an empty, `.` or `..` segment, a backslash, a control character, or more than 32 segments. It also refuses a path that leaves the chosen folder, for example through a symbolic link.
-- Generate a DATAMIMIC model from a JSON, XML or CSV file: choose *New > DATAMIMIC Model from File…* and select the file. The file can be anywhere on the disk. For a CSV file the dialog detects the delimiter and lets you change it, because the platform does not detect it. The platform writes the model, and with the template flow also a template, into the selected folder. The plugin asks before it replaces existing files, and the model opens when it is ready.
-
-- Migrate GWA and AMA files: choose *New > DATAMIMIC Migration…* and select an `.xlsm` workbook or an `.ama` archive. The dialog asks for the schema version (GWA) or the `.ini` file and the template folder (AMA). The plugin asks before it replaces files in the template folder, and the result opens when it is ready.
 
 ## [0.6.0]
 
