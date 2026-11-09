@@ -8,11 +8,13 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.text.StringUtil.escapeXmlEntities
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.rapiddweller.datamimic.core.generation.GenerationRun
 import com.rapiddweller.datamimic.core.generation.GenerationTask
+import com.rapiddweller.datamimic.core.generation.TaskComment
 import com.rapiddweller.datamimic.core.generation.TaskStatus
 import com.rapiddweller.datamimic.core.workspace.FolderIdentity
 import com.rapiddweller.datamimic.ide.AuthState
@@ -23,12 +25,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.FlowLayout
+import java.awt.Font
 import java.awt.GridLayout
 import java.awt.event.HierarchyEvent
 import javax.swing.JButton
@@ -42,14 +46,24 @@ import javax.swing.DefaultListModel
 
 private data class GenerationBinding(val identity: FolderIdentity, val auth: AuthState.SignedIn)
 
-private class GenerationTaskRenderer : JPanel(GridLayout(2, 1)), ListCellRenderer<GenerationTask> {
+private class GenerationTaskRenderer : JPanel(BorderLayout(JBUI.scale(12), 0)), ListCellRenderer<GenerationTask> {
     private val primary = JLabel()
     private val secondary = JLabel()
+    // WHY: a long comment is cut with "…" and shows whole in the tooltip.
+    private val comment = JLabel().apply {
+        font = font.deriveFont(Font.ITALIC)
+        // WHY: other project members write comments. A text that starts with <html> must not render.
+        putClientProperty("html.disable", true)
+    }
 
     init {
         border = JBUI.Borders.empty(4, 6)
-        add(primary)
-        add(secondary)
+        add(JPanel(GridLayout(2, 1)).apply {
+            isOpaque = false
+            add(primary)
+            add(secondary)
+        }, BorderLayout.WEST)
+        add(comment, BorderLayout.CENTER)
     }
 
     override fun getListCellRendererComponent(
@@ -68,10 +82,15 @@ private class GenerationTaskRenderer : JPanel(GridLayout(2, 1)), ListCellRendere
             else -> AllIcons.RunConfigurations.TestNotRan
         }
         secondary.text = listOfNotNull(value.queuedAt, value.taskId.take(8)).joinToString(" · ")
-        toolTipText = value.taskId
+        // WHY: a comment can have several lines. The list cell shows the first line.
+        comment.text = value.comment.text?.lineSequence()?.firstOrNull().orEmpty()
+        toolTipText = value.comment.text
+            ?.let { "<html><body style='width: ${JBUI.scale(320)}px'>${escapeXmlEntities(value.taskId)}<br><br>${escapeXmlEntities(it).replace("\n", "<br>")}</body></html>" }
+            ?: value.taskId
         background = if (isSelected) list.selectionBackground else list.background
         primary.foreground = if (isSelected) list.selectionForeground else list.foreground
         secondary.foreground = if (isSelected) list.selectionForeground else UIUtil.getContextHelpForeground()
+        comment.foreground = if (isSelected) list.selectionForeground else UIUtil.getContextHelpForeground()
         isOpaque = true
         return this
     }
@@ -97,6 +116,8 @@ internal class GenerationTasksView(private val project: Project, parentScope: Co
     private var selectionRequest = 0L
     private var historyJob: Job? = null
     private var detail: RunResultView? = null
+    // WHY: one editor for each binding. Its drafts end with the binding, and a save always goes to the project it started in.
+    private var commentPanel: TaskCommentPanel? = null
 
     init {
         val controls = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
@@ -171,6 +192,19 @@ internal class GenerationTasksView(private val project: Project, parentScope: Co
         if (binding == target) return
         clear("Loading tasks…")
         binding = target
+        commentPanel = TaskCommentPanel(
+            scope,
+            { taskId, text ->
+                DatamimicPlatform.getInstance().generation.boundTo(target.identity.origin).updateComment(target.identity.projectId, taskId, text)
+            },
+            { taskId, comment ->
+                if (binding == target) {
+                    showComment(taskId, comment)
+                    // WHY: a load that started before this save can still bring the old comment.
+                    if (historyJob?.isActive == true) load(target, page)
+                }
+            },
+        )
         page = 1
         load(target, page)
     }
@@ -207,6 +241,10 @@ internal class GenerationTasksView(private val project: Project, parentScope: Co
         detail = view
         details.removeAll()
         details.add(view, BorderLayout.CENTER)
+        commentPanel?.let {
+            it.bind(row?.let(tasks::getElementAt))
+            details.add(it, BorderLayout.SOUTH)
+        }
         details.revalidate()
         details.repaint()
         view.start()
@@ -228,6 +266,7 @@ internal class GenerationTasksView(private val project: Project, parentScope: Co
         historyJob?.cancel()
         detail?.dispose()
         detail = null
+        commentPanel = null
         selectedTaskId = null
         tasks.removeAllElements()
         list.clearSelection()
@@ -257,6 +296,7 @@ internal class GenerationTasksView(private val project: Project, parentScope: Co
                 selectedTaskId?.let { selected ->
                     val index = result.tasks.indexOfFirst { it.taskId == selected }
                     if (index >= 0) list.selectedIndex = index
+                    commentPanel?.bind(result.tasks.getOrNull(index))
                 } ?: showDetails(if (result.tasks.isEmpty()) "No generation tasks." else "Select a task.")
             } catch (e: CancellationException) {
                 throw e
@@ -271,6 +311,12 @@ internal class GenerationTasksView(private val project: Project, parentScope: Co
                 if (binding == target && authAllows(target) && historyRequest == request) refresh.isEnabled = true
             }
         }
+    }
+
+    /** A saved comment replaces the one in its list row. The editor shows it already. */
+    private fun showComment(taskId: String, comment: TaskComment) {
+        val row = (0 until tasks.size()).firstOrNull { tasks.getElementAt(it).taskId == taskId } ?: return
+        tasks.set(row, tasks.getElementAt(row).copy(comment = comment))
     }
 
     private fun updatePaging(currentPage: Int, totalPages: Int) {

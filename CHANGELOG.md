@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Add a comment to a generation task. The **Generation Tasks** list shows the comment in a column next to each task. Select a task to edit its comment below the details. The editor shows the length as `n/500`, the last editor and the edit time. Comments need Platform 4.2.0.
+- The **Save** button of the comment editor is disabled while the text is unchanged. The plugin trims the text before it sends it. A blank text removes the comment. If a save fails, the draft stays in the editor and the editor shows the error. A draft also stays when you select another task and come back.
 - Generate a DATAMIMIC model from a JSON, XML or CSV file: choose *New > DATAMIMIC Model from File…* and select the file. The file can be anywhere on the disk. For a CSV file the dialog detects the delimiter and lets you change it, because the platform does not detect it. The platform writes the model, and with the template flow also a template, into the selected folder. The plugin asks before it replaces existing files, and the model opens when it is ready.
 
 ## [0.6.0]

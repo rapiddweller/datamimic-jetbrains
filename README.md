@@ -46,6 +46,9 @@ generation runs, and MCP access for IDE agents.
 - The bottom **Generation Tasks** tool window lists recent platform generation tasks. Select a task to reopen its logs and
   preview samples. Successful tasks also expose **Artifacts**: save one file, open saved text files in the IDE, or
   download every artifact as a ZIP.
+- A task in any status can have a comment of up to 500 characters (Platform 4.2.0). The list shows it in a column. Select
+  a task to edit the comment below the details. The editor shows the last editor and the edit time. If a save fails, the
+  draft stays in the editor. When two people edit the same comment, the last save wins.
 
 ## Junie routing
 

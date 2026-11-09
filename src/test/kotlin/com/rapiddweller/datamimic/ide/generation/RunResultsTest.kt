@@ -33,6 +33,7 @@ import java.awt.Container
 import java.net.http.HttpClient
 import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComboBox
 import javax.swing.JLabel
@@ -257,6 +258,146 @@ class RunResultsTest : BasePlatformTestCase() {
             scope.cancel()
             platform.close()
         }
+    }
+
+    fun `test the task list shows the comment as a column and the editor saves into its row`() {
+        val platform = FakePlatform()
+        val scope = CoroutineScope(SupervisorJob())
+        val service = DatamimicPlatform.getInstance()
+        var view: GenerationTasksView? = null
+        try {
+            PlatformTestUtil.waitWithEventsDispatching("platform state stayed unknown", { service.state.value != AuthState.Unknown }, 5)
+            platform.generationStatus = "SUCCESS"
+            platform.generationHistoryResponse = """{
+                "data":[{"task_id":"generation-1","status":"SUCCESS","name":"GENERATE","date_queued":"2026-11-08T10:00:00Z",
+                         "comment":"Nightly baseline\nsecond line","comment_updated_by":"bob@example.com","comment_updated_at":"2026-11-07T09:00:00"},
+                        {"task_id":"t2","status":"SUCCESS","name":"GENERATE","comment":"<html><b>bold</b> hidden"}],
+                "meta":{"pagination":{"current_page":1,"total_pages":1}}
+            }"""
+            service.signIn(LoginInput(platform.origin, "ada@example.com", "secret", false))
+            val identity = FolderIdentity(platform.origin, "p1", "Payments")
+            runInEdtAndWait {
+                view = GenerationTasksView(project, scope).also { it.show(identity, "generation-1") }
+            }
+
+            PlatformTestUtil.waitWithEventsDispatching("the comment editor was not bound to the task", {
+                find<TaskCommentPanel>(checkNotNull(view))?.area?.text == "Nightly baseline\nsecond line"
+            }, 5)
+            runInEdtAndWait {
+                val list = checkNotNull(find<javax.swing.JList<*>>(checkNotNull(view)))
+                @Suppress("UNCHECKED_CAST")
+                val typed = list as javax.swing.JList<com.rapiddweller.datamimic.core.generation.GenerationTask>
+                fun cellAt(index: Int) = typed.cellRenderer.getListCellRendererComponent(typed, typed.model.getElementAt(index), index, false, false)
+                val cell = cellAt(0)
+                // WHY: the list cell shows the first line only. The tooltip holds the whole comment.
+                assertTrue(labels(cell).any { it.text == "Nightly baseline" })
+                assertTrue((cell as javax.swing.JComponent).toolTipText.contains("second line"))
+                assertTrue(checkNotNull(find<TaskCommentPanel>(checkNotNull(view))).info.text.startsWith("Last edited by bob@example.com on "))
+
+                // WHY: other project members write comments. A text that starts with <html> must show as text, not render.
+                val label = labels(cellAt(1)).single { it.text == "<html><b>bold</b> hidden" }
+                assertEquals(true, label.getClientProperty("html.disable"))
+            }
+
+            runInEdtAndWait {
+                val panel = checkNotNull(find<TaskCommentPanel>(checkNotNull(view)))
+                panel.area.text = "  Release candidate  "
+                panel.saveButton.doClick()
+            }
+            PlatformTestUtil.waitWithEventsDispatching("the saved comment did not reach the list row", {
+                val list = find<javax.swing.JList<*>>(checkNotNull(view))
+                (list?.model?.getElementAt(0) as? com.rapiddweller.datamimic.core.generation.GenerationTask)?.comment?.text == "Release candidate"
+            }, 5)
+
+            assertEquals(listOf("""PUT /api/v2/projects/p1/tasks/generation-1/comment {"comment":"Release candidate"}"""), platform.taskCommentRequests)
+            runInEdtAndWait {
+                val panel = checkNotNull(find<TaskCommentPanel>(checkNotNull(view)))
+                assertEquals("Release candidate", panel.area.text)
+                assertFalse(panel.saveButton.isEnabled)
+                assertTrue(panel.info.text.startsWith("Last edited by ada@example.com on "))
+            }
+        } finally {
+            view?.let { runInEdtAndWait(it::dispose) }
+            runCatching(service::signOut)
+            scope.cancel()
+            platform.close()
+        }
+    }
+
+    fun `test a load that was in flight during a Save does not bring the old comment back`() {
+        val platform = FakePlatform()
+        val scope = CoroutineScope(SupervisorJob())
+        val service = DatamimicPlatform.getInstance()
+        var view: GenerationTasksView? = null
+        try {
+            PlatformTestUtil.waitWithEventsDispatching("platform state stayed unknown", { service.state.value != AuthState.Unknown }, 5)
+            platform.generationStatus = "SUCCESS"
+            platform.historyFromComment = true
+            platform.taskComment = "old"
+            platform.taskCommentUpdatedBy = "bob@example.com"
+            platform.taskCommentUpdatedAt = "2026-11-07T09:00:00"
+            service.signIn(LoginInput(platform.origin, "ada@example.com", "secret", false))
+            runInEdtAndWait {
+                view = GenerationTasksView(project, scope).also { it.show(FolderIdentity(platform.origin, "p1", "Payments"), "generation-1") }
+            }
+            PlatformTestUtil.waitWithEventsDispatching("the editor did not show the comment", { find<TaskCommentPanel>(checkNotNull(view))?.area?.text == "old" }, 5)
+
+            // WHY: the view reloads the list by itself when the task shows as finished. Wait until that is over.
+            var reads = -1
+            while (reads != platform.generationHistoryReads) {
+                reads = platform.generationHistoryReads
+                repeat(8) {
+                    PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+                    Thread.sleep(50)
+                }
+            }
+
+            // One more load starts and holds the old comment. The user saves while it waits.
+            val gate = CountDownLatch(1)
+            platform.historyGate = gate
+            runInEdtAndWait { buttons(checkNotNull(view)).single { it.text == "Refresh" }.doClick() }
+            PlatformTestUtil.waitWithEventsDispatching("the extra load did not start", { platform.generationHistoryReads == reads + 1 }, 5)
+            runInEdtAndWait {
+                val panel = checkNotNull(find<TaskCommentPanel>(checkNotNull(view)))
+                panel.area.text = "new"
+                panel.saveButton.doClick()
+            }
+            PlatformTestUtil.waitWithEventsDispatching("the platform did not get the comment", { platform.taskComment == "new" }, 5)
+            PlatformTestUtil.waitWithEventsDispatching("the saved comment did not reach the list row", {
+                rowComment(checkNotNull(view)) == "new"
+            }, 5)
+            gate.countDown()
+            repeat(20) {
+                PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+                Thread.sleep(50)
+            }
+
+            assertEquals("new", rowComment(checkNotNull(view)))
+            assertEquals("new", checkNotNull(find<TaskCommentPanel>(checkNotNull(view))).area.text)
+        } finally {
+            platform.historyGate?.countDown()
+            view?.let { runInEdtAndWait(it::dispose) }
+            runCatching(service::signOut)
+            scope.cancel()
+            platform.close()
+        }
+    }
+
+    private fun rowComment(view: Component): String? =
+        (find<javax.swing.JList<*>>(view)?.model?.getElementAt(0) as? com.rapiddweller.datamimic.core.generation.GenerationTask)?.comment?.text
+
+    private fun buttons(component: Component): List<javax.swing.JButton> = when (component) {
+        is javax.swing.JButton -> listOf(component)
+        is Container -> component.components.flatMap(::buttons)
+        else -> emptyList()
+    }
+
+    private inline fun <reified T : Component> find(component: Component): T? = find(component, T::class.java)
+
+    private fun <T : Component> find(component: Component, type: Class<T>): T? = when {
+        type.isInstance(component) -> type.cast(component)
+        component is Container -> component.components.firstNotNullOfOrNull { find(it, type) }
+        else -> null
     }
 
     private fun lines(count: Int) = (1..count).joinToString("\n") { "line $it" }

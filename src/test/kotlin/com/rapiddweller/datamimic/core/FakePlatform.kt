@@ -7,6 +7,13 @@ package com.rapiddweller.datamimic.core
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import java.net.InetSocketAddress
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets.ISO_8859_1
@@ -15,6 +22,7 @@ import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** One accepted start of an upload task, as the platform read it. */
@@ -33,6 +41,7 @@ private class FormPart(val name: String, val fileName: String?, val bytes: ByteA
  */
 class FakePlatform : AutoCloseable {
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+    private val executor = Executors.newCachedThreadPool()
     val origin = PlatformOrigin("http://127.0.0.1:${server.address.port}")
 
     var password = "secret"
@@ -58,6 +67,17 @@ class FakePlatform : AutoCloseable {
     var artifactFirstChunk: ByteArray? = null
     var artifactChunkGate: CountDownLatch? = null
     var artifactFirstChunkWritten: CountDownLatch? = null
+    /** The comment of task `generation-1` as Platform 4.2.0 keeps it, and every request that reached the comment route. */
+    @Volatile var taskComment: String? = null
+    @Volatile var taskCommentUpdatedBy: String? = null
+    @Volatile var taskCommentUpdatedAt: String? = null
+    @Volatile var taskCommentStatus = 200
+    val taskCommentRequests = CopyOnWriteArrayList<String>()
+
+    /** With this on, the task list reports the comment state above. The list answers with the state of the moment the request came, and then waits for [historyGate]. */
+    @Volatile var historyFromComment = false
+    @Volatile var historyGate: CountDownLatch? = null
+    @Volatile var generationHistoryReads = 0
     val generationRequests = CopyOnWriteArrayList<String>()
     val generationSearchRequests = CopyOnWriteArrayList<String>()
     val cancelledGenerationTasks = CopyOnWriteArrayList<String>()
@@ -357,7 +377,10 @@ class FakePlatform : AutoCloseable {
             val body = exchange.body()
             generationSearchRequests += body
             val response = if ("\"routing_keys\"" in body) {
-                generationHistoryResponse
+                generationHistoryReads++
+                val snapshot = if (historyFromComment) historyFromTaskComment() else generationHistoryResponse
+                historyGate?.await(5, TimeUnit.SECONDS)
+                snapshot
             } else {
                 generationStatusReads++
                 generationSearchResponse ?: """{"data":[{"task_id":"generation-1","status":"$generationStatus"}]}"""
@@ -406,6 +429,34 @@ class FakePlatform : AutoCloseable {
                 else -> exchange.error(404, "NOT_FOUND", "missing")
             }
         }
+        authenticated("/api/v2/projects/p1/tasks/generation-1/comment") { exchange ->
+            val body = exchange.body()
+            taskCommentRequests += "${exchange.requestMethod} ${exchange.requestURI.rawPath} $body"
+            if (exchange.requestMethod != "PUT") return@authenticated exchange.error(405, "METHOD_NOT_ALLOWED", "Method Not Allowed")
+            if (taskCommentStatus != 200) return@authenticated exchange.error(taskCommentStatus, "COMMENT_FAILED", "The comment was not saved")
+            val sent = json.parseToJsonElement(body).jsonObject.getValue("comment").jsonPrimitive.content
+            // WHY: the platform limits the raw text to 500 characters, then strips it. A blank text removes the comment.
+            if (sent.codePointCount(0, sent.length) > 500) {
+                return@authenticated exchange.respond(
+                    422,
+                    """{"detail":"Request validation failed","code":"VALIDATION_ERROR","errors":[{"loc":["body","comment"],"msg":"String should have at most 500 characters"}]}""",
+                )
+            }
+            val stored = sent.trim().ifEmpty { null }
+            if (stored != taskComment) {
+                taskComment = stored
+                taskCommentUpdatedBy = "ada@example.com"
+                taskCommentUpdatedAt = "2026-11-08T10:15:00"
+            }
+            exchange.respond(
+                200,
+                buildJsonObject {
+                    put("comment", taskComment)
+                    put("comment_updated_by", taskCommentUpdatedBy)
+                    put("comment_updated_at", taskCommentUpdatedAt)
+                }.toString(),
+            )
+        }
         authenticated("/api/v2/tasks/generation-1/cancel") { exchange ->
             cancelledGenerationTasks += "generation-1"
             generationStatus = "CANCELLED"
@@ -433,6 +484,8 @@ class FakePlatform : AutoCloseable {
                 }
             }
         }
+        // WHY: a request that waits at a gate must not hold back the others. The default executor has one thread.
+        server.executor = executor
         server.start()
     }
 
@@ -467,6 +520,23 @@ class FakePlatform : AutoCloseable {
         }
     }
 
+    private fun historyFromTaskComment() = buildJsonObject {
+        putJsonArray("data") {
+            add(
+                buildJsonObject {
+                    put("task_id", "generation-1")
+                    put("status", "SUCCESS")
+                    put("name", "GENERATE")
+                    put("date_queued", "2026-11-08T10:00:00Z")
+                    put("comment", taskComment)
+                    put("comment_updated_by", taskCommentUpdatedBy)
+                    put("comment_updated_at", taskCommentUpdatedAt)
+                },
+            )
+        }
+        putJsonObject("meta") { putJsonObject("pagination") { put("current_page", 1); put("total_pages", 1) } }
+    }.toString()
+
     private fun originOk(exchange: HttpExchange) = exchange.requestHeaders.getFirst("Origin") == origin.value
 
     private fun cookie(exchange: HttpExchange): String? = exchange.requestHeaders.getFirst("Cookie")
@@ -475,7 +545,10 @@ class FakePlatform : AutoCloseable {
         ?.firstOrNull { it.startsWith("datamimic_session=") }
         ?.substringAfter('=')
 
-    override fun close() = server.stop(0)
+    override fun close() {
+        server.stop(0)
+        executor.shutdownNow()
+    }
 }
 
 /** Percent-decodes the path like the platform's router: `+` stays a plus sign. */
