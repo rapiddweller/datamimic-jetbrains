@@ -20,6 +20,8 @@ enum class UploadFileType(val wire: String) {
     XML_MODEL("xml_generate_model"),
     XML_TEMPLATE("xml_generate_template"),
     CSV_MODEL("csv_generate_model"),
+    GWA_MIGRATION("gwa_migration"),
+    AMA_MIGRATION("ama_migration"),
 }
 
 sealed interface UploadStatus {
@@ -31,7 +33,7 @@ sealed interface UploadStatus {
     data class Failed(val message: String) : UploadStatus
 }
 
-/** The platform's upload task: it creates DATAMIMIC files from a JSON, XML or CSV file, in the background. */
+/** The platform's upload task: it creates DATAMIMIC files from a JSON, XML, CSV, XLSM or AMA file, in the background. */
 class UploadTaskApi(private val http: PlatformHttp) {
     /** Starts the task and returns its id. The task overwrites existing target files without a message. */
     fun start(

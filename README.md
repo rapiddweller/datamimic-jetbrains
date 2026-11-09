@@ -33,6 +33,9 @@ generation runs, and MCP access for IDE agents.
 - *New > DATAMIMIC Model from File…* makes a model from a `.json`, `.xml` or `.csv` file. The platform writes the model
   into the selected folder. The template flow also writes a template. The source file can be anywhere on the disk. For a
   CSV file the dialog detects the delimiter, and you can change it. The dialog asks before it replaces existing files.
+- *New > DATAMIMIC Migration…* migrates a GWA workbook (`.xlsm`) to an `.opctl.csv` file, or an AMA archive (`.ama`) with
+  its `.ini` file to a model and EDI templates. The dialog asks for the schema version (GWA) and the template folder
+  (AMA). It asks before it replaces files in the template folder.
 - Server-side edit locks: showing a file takes its lock, a banner explains when someone else holds it, and
   *Take over…* overrides it after confirmation.
 - Completion and checks for the folder's XML files from the platform's language server
@@ -49,6 +52,14 @@ generation runs, and MCP access for IDE agents.
 - A task in any status can have a comment of up to 500 characters (Platform 4.2.0). The list shows it in a column. Select
   a task to edit the comment below the details. The editor shows the last editor and the edit time. If a save fails, the
   draft stays in the editor. When two people edit the same comment, the last save wins.
+  download every artifact as a ZIP. An artifact in a subfolder shows its relative path, such as `xml/order.xml`. **Save /
+  Open** asks for a folder and saves a nested artifact into the matching subfolder. The plugin refuses a path that
+  leaves the chosen folder, and it asks before it replaces a file.
+- **Build Operate curl…** on an XML or JSON artifact builds a `curl` command for the Artifact Operate API (Platform
+  4.2.0). Set the task, the rows and their operations. The dialog shows the command and the request body, copies the
+  command, and saves `request.json`. The script sets `DATAMIMIC_URL`, `PROJECT_ID` and `TASK_ID` for you. The command reads
+  the token from `$PROJECT_TOKEN`. The plugin never writes a token. **Run now** sends the call with the IDE
+  session and shows the response.
 
 ## Junie routing
 

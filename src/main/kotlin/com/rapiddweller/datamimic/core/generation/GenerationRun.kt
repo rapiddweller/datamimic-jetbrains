@@ -12,7 +12,7 @@ import java.io.OutputStream
 /** Read-only observation of one Platform task. Closing this object never cancels that task. */
 class GenerationRun(
     private val api: GenerationApi,
-    private val projectId: String,
+    val projectId: String,
     val taskId: String,
     private val startedAt: Long = System.currentTimeMillis(),
     private val now: () -> Long = System::currentTimeMillis,
@@ -95,8 +95,8 @@ class GenerationRun(
 
     fun artifacts(): List<TaskArtifact> = api.artifacts(projectId, taskId)
 
-    internal fun downloadArtifact(entityName: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
-        api.downloadArtifact(projectId, taskId, entityName, output, keepGoing)
+    internal fun downloadArtifact(path: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
+        api.downloadArtifact(projectId, taskId, path, output, keepGoing)
 
     internal fun downloadArtifacts(output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
         api.downloadArtifacts(projectId, taskId, output, keepGoing)

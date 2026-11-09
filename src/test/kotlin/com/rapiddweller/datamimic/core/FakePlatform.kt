@@ -78,6 +78,11 @@ class FakePlatform : AutoCloseable {
     @Volatile var historyFromComment = false
     @Volatile var historyGate: CountDownLatch? = null
     @Volatile var generationHistoryReads = 0
+    /** The Operate API of Platform 4.2.0: every request that reached it, and the answer it gives. */
+    @Volatile var operateStatus = 200
+    @Volatile var operateResponse =
+        """{"task_id":"generation-1","operate_id":"op-1","artifacts":[{"id":"case-1","content":"<order/>\n","media_type":"application/xml","outcomes":[{"operation_index":0,"command":"set(//order/id, '2')","status":"applied","path":null}]}]}"""
+    val operateRequests = CopyOnWriteArrayList<String>()
     val generationRequests = CopyOnWriteArrayList<String>()
     val generationSearchRequests = CopyOnWriteArrayList<String>()
     val cancelledGenerationTasks = CopyOnWriteArrayList<String>()
@@ -418,6 +423,7 @@ class FakePlatform : AutoCloseable {
                         exchange.respond(200, generationArtifactMetadata)
                     }
                 }
+                path == "${prefix}operate" -> operate(exchange)
                 path == "${prefix}download" -> {
                     artifactDownloadPaths += exchange.requestURI.rawPath
                     exchange.respondBytes(200, artifactZipPayload)
@@ -457,6 +463,7 @@ class FakePlatform : AutoCloseable {
                 }.toString(),
             )
         }
+        authenticated("/api/v2/projects/p1/tasks/latest/artifacts/operate") { exchange -> operate(exchange) }
         authenticated("/api/v2/tasks/generation-1/cancel") { exchange ->
             cancelledGenerationTasks += "generation-1"
             generationStatus = "CANCELLED"
@@ -489,13 +496,19 @@ class FakePlatform : AutoCloseable {
         server.start()
     }
 
-    /** Writes the files the task makes and returns their paths: the template first, then the model. */
+    /** Writes the files the task makes and returns their paths: the template first, then the model. An AMA migration writes the model first. */
     private fun writeUploadOutputs(start: UploadTaskStart): List<String> {
         val base = Regex(""""file_name":"([^"]*)"""").find(start.customFields)!!.groupValues[1]
         val path = { suffix: String -> listOf(start.dir, base + suffix).filter(String::isNotEmpty).joinToString("/") }
         val outputs = when (start.fileType) {
             "json_generate_template" -> listOf(path(".template.json") to "{}", path(".xml") to "<setup/>")
             "xml_generate_template" -> listOf(path(".template.xml") to "<list/>", path(".xml") to "<setup/>")
+            "gwa_migration" -> listOf(path(".opctl.csv") to "id;op")
+            "ama_migration" -> {
+                val folder = Regex(""""templateDirectory":"([^"]*)"""").find(start.customFields)?.groupValues?.get(1) ?: "template"
+                val templates = listOf("a.edi", "b.edi").map { listOf(start.dir, folder, it).filter(String::isNotEmpty).joinToString("/") to "edi" }
+                listOf(path(".xml") to "<setup/>") + templates
+            }
             else -> listOf(path(".xml") to "<setup/>")
         }
         outputs.forEach { (file, content) -> files[file] = content to "etag-1" }
@@ -536,6 +549,11 @@ class FakePlatform : AutoCloseable {
         }
         putJsonObject("meta") { putJsonObject("pagination") { put("current_page", 1); put("total_pages", 1) } }
     }.toString()
+    private fun operate(exchange: HttpExchange) {
+        operateRequests += "${exchange.requestMethod} ${exchange.requestURI.rawPath} ${exchange.body()}"
+        if (exchange.requestMethod != "POST") return exchange.error(405, "METHOD_NOT_ALLOWED", "Method Not Allowed")
+        exchange.respond(operateStatus, operateResponse)
+    }
 
     private fun originOk(exchange: HttpExchange) = exchange.requestHeaders.getFirst("Origin") == origin.value
 

@@ -13,6 +13,7 @@ import com.rapiddweller.datamimic.core.PlatformSessionFence
 import com.rapiddweller.datamimic.core.PlatformOrigin
 import com.rapiddweller.datamimic.core.RequestBody
 import com.rapiddweller.datamimic.core.encode
+import com.rapiddweller.datamimic.core.encodePath
 import com.rapiddweller.datamimic.core.json
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
@@ -156,7 +157,7 @@ private data class PreviewResponse(val preview: List<PreviewRecord>)
 private data class ArtifactMetadataResponse(val artifacts: List<ArtifactMetadata>)
 
 @Serializable
-private data class ArtifactMetadata(val url: String? = null, val size: String? = null)
+private data class ArtifactMetadata(val path: String? = null, val url: String? = null, val size: String? = null)
 
 /** What the IDE renders for one generated product. */
 sealed interface PreviewContent {
@@ -252,14 +253,21 @@ class GenerationApi(private val http: PlatformHttp) {
             .artifacts
             .map { toArtifact(it, projectId, taskId) }
 
+    /**
+     * Applies operations to stored artifacts of a finished task and returns the resulting artifacts. [taskId] can be
+     * `latest`. The platform stores nothing: the response is the only record of the call.
+     */
+    fun operate(projectId: String, taskId: String, body: String): OperateResponse =
+        json.decodeFromString<OperateResponse>(http.postJson("${base(projectId)}/tasks/${encode(taskId)}/artifacts/operate", body))
+
     internal fun downloadArtifact(
         projectId: String,
         taskId: String,
-        entityName: String,
+        path: String,
         output: OutputStream,
         keepGoing: () -> Boolean,
     ): PlatformSessionFence =
-        download("${base(projectId)}/tasks/${encode(taskId)}/artifacts/${encodeEntityName(entityName)}/download", output, keepGoing)
+        download("${base(projectId)}/tasks/${encode(taskId)}/artifacts/${encodeArtifactPath(path)}/download", output, keepGoing)
 
     internal fun downloadArtifacts(projectId: String, taskId: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
         download("${base(projectId)}/tasks/${encode(taskId)}/artifacts/download", output, keepGoing)
@@ -320,9 +328,9 @@ data class TaskComment(val text: String?, val updatedBy: String?, val updatedAt:
 
 data class GenerationTaskPage(val tasks: List<GenerationTask>, val page: Int, val totalPages: Int)
 
-/** Metadata is loaded only for a selected successful task. */
-data class TaskArtifact(val entityName: String, val size: String?) {
-    override fun toString(): String = listOfNotNull(entityName, size?.let { "($it)" }).joinToString(" ")
+/** Metadata is loaded only for a selected successful task. [path] is relative to the task, such as `xml/order.xml`. */
+data class TaskArtifact(val path: String, val size: String?) {
+    override fun toString(): String = listOfNotNull(path, size?.let { "($it)" }).joinToString(" ")
 }
 
 data class TaskLog(val content: String, val completed: Boolean)
@@ -349,25 +357,39 @@ internal fun toContent(record: PreviewRecord): PreviewContent = when (record) {
 
 private val prettyJson = Json { prettyPrint = true }
 
-private fun toArtifact(metadata: ArtifactMetadata, projectId: String, taskId: String): TaskArtifact =
-    TaskArtifact(
-        requireNotNull(entityNameFrom(metadata.url, projectId, taskId)) { "The platform returned invalid artifact metadata." },
+/** The platform allows at most 32 segments in an artifact path. */
+private const val MAX_ARTIFACT_PATH_SEGMENTS = 32
+
+/**
+ * Whether [path] is a safe relative artifact path such as `xml/order.xml`. It follows the platform's rule: no empty,
+ * `.` or `..` segment, no backslash, no control character, and at most [MAX_ARTIFACT_PATH_SEGMENTS] segments.
+ */
+internal fun isValidArtifactPath(path: String): Boolean {
+    val segments = path.split('/')
+    return segments.size <= MAX_ARTIFACT_PATH_SEGMENTS &&
+        segments.none { it.isEmpty() || it == "." || it == ".." } &&
+        path.none { it == '\\' || it.code < 0x20 || it.code in 0x7f..0x9f }
+}
+
+private fun toArtifact(metadata: ArtifactMetadata, projectId: String, taskId: String): TaskArtifact {
+    // WHY: Platform 4.2.0 sends the exact relative `path`. Older platforms send only the `url`.
+    val path = metadata.path ?: pathFromUrl(metadata.url, projectId, taskId)
+    return TaskArtifact(
+        requireNotNull(path?.takeIf(::isValidArtifactPath)) { "The platform returned invalid artifact metadata." },
         metadata.size,
     )
+}
 
-private fun entityNameFrom(url: String?, projectId: String, taskId: String): String? {
+private fun pathFromUrl(url: String?, projectId: String, taskId: String): String? {
     val prefix = "/api/v2/projects/$projectId/tasks/$taskId/artifacts/"
     val suffix = "/download"
     if (url == null || !url.startsWith(prefix) || !url.endsWith(suffix)) return null
-    val entity = url.removePrefix(prefix).removeSuffix(suffix)
-    return entity.takeIf { it.isNotBlank() && it !in setOf(".", "..") && '/' !in it && '\\' !in it && it.none { char -> char.code < 0x20 || char.code == 0x7f } }
+    return url.removePrefix(prefix).removeSuffix(suffix)
 }
 
-private fun encodeEntityName(entityName: String): String {
-    require(entityName.isNotBlank() && entityName !in setOf(".", "..") && '/' !in entityName && '\\' !in entityName && entityName.none { it.code < 0x20 || it.code == 0x7f }) {
-        "The platform returned an invalid artifact name."
-    }
-    return encode(entityName).replace("+", "%20")
+private fun encodeArtifactPath(path: String): String {
+    require(isValidArtifactPath(path)) { "The platform returned an invalid artifact path." }
+    return encodePath(path)
 }
 
 private fun cell(value: JsonElement?): String = when (value) {

@@ -14,8 +14,10 @@ import kotlinx.serialization.SerializationException
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -59,7 +61,7 @@ class ArtifactDownloadTest {
         platform.artifactPayload = binary
         platform.artifactZipPayload = zip
 
-        assertEquals(listOf(name, literalPercentName), api.artifacts("p1", "generation-1").map { it.entityName })
+        assertEquals(listOf(name, literalPercentName), api.artifacts("p1", "generation-1").map { it.path })
         val single = java.io.ByteArrayOutputStream()
         api.downloadArtifact("p1", "generation-1", name, single) { true }
         val literalPercent = java.io.ByteArrayOutputStream()
@@ -100,9 +102,89 @@ class ArtifactDownloadTest {
         platform.generationArtifactMetadata = """{"artifacts":[{"url":null}]}"""
         assertThrows(IllegalArgumentException::class.java) { api.artifacts("p1", "generation-1") }
 
-        listOf("../escape.bin", "folder/file.bin", "folder\\file.bin", ".", "..").forEach { name ->
+        listOf("../escape.bin", "folder/../file.bin", "folder\\file.bin", ".", "..").forEach { name ->
             platform.generationArtifactMetadata = metadata(name)
             assertThrows(IllegalArgumentException::class.java) { api.artifacts("p1", "generation-1") }
+        }
+
+        assertTrue(platform.artifactDownloadPaths.isEmpty())
+    }
+
+    @Test
+    fun `nested artifact paths are listed with their folder and downloaded segment by segment`() {
+        val nested = "xml/deep/my order+1.xml"
+        platform.generationArtifactMetadata = pathMetadata("flat.csv", "xml/order.xml", nested)
+        platform.artifactPayload = byteArrayOf(1, 2, 3)
+
+        val artifacts = api.artifacts("p1", "generation-1")
+        val out = java.io.ByteArrayOutputStream()
+        api.downloadArtifact("p1", "generation-1", nested, out) { true }
+
+        assertEquals(listOf("flat.csv", "xml/order.xml", nested), artifacts.map { it.path })
+        assertEquals("xml/order.xml (6 B)", artifacts[1].toString())
+        assertArrayEquals(byteArrayOf(1, 2, 3), out.toByteArray())
+        assertEquals(
+            listOf("/api/v2/projects/p1/tasks/generation-1/artifacts/xml/deep/my%20order%2B1.xml/download"),
+            platform.artifactDownloadPaths,
+        )
+    }
+
+    @Test
+    fun `the path field wins over the url, which the platform percent-encodes`() {
+        platform.generationArtifactMetadata =
+            """{"artifacts":[{"path":"my order.xml","url":"/api/v2/projects/p1/tasks/generation-1/artifacts/my%20order.xml/download","size":"6 B"}]}"""
+
+        assertEquals(listOf("my order.xml"), api.artifacts("p1", "generation-1").map { it.path })
+    }
+
+    @Test
+    fun `an older platform without the path field still lists nested artifacts from the url`() {
+        platform.generationArtifactMetadata = metadata("flat.bin", "xml/order.xml")
+
+        assertEquals(listOf("flat.bin", "xml/order.xml"), api.artifacts("p1", "generation-1").map { it.path })
+    }
+
+    @Test
+    fun `a path with 32 segments is accepted and one with 33 is rejected`() {
+        platform.generationArtifactMetadata = pathMetadata(segments(32))
+        assertEquals(listOf(segments(32)), api.artifacts("p1", "generation-1").map { it.path })
+
+        platform.generationArtifactMetadata = pathMetadata(segments(33))
+        assertThrows(IllegalArgumentException::class.java) { api.artifacts("p1", "generation-1") }
+        assertThrows(IllegalArgumentException::class.java) {
+            api.downloadArtifact("p1", "generation-1", segments(33), java.io.ByteArrayOutputStream()) { true }
+        }
+        assertTrue(platform.artifactDownloadPaths.isEmpty())
+    }
+
+    @Test
+    fun `traversal attempts in metadata are rejected before a download route is used`() {
+        UNSAFE_PATHS.forEach { path ->
+            platform.generationArtifactMetadata = pathMetadata(path)
+            assertThrows("metadata path <$path>", IllegalArgumentException::class.java) { api.artifacts("p1", "generation-1") }
+        }
+        // WHY: the url form of an older platform must obey the same rules as the path field.
+        listOf("../escape.bin", "xml/../../escape.bin", "xml//order.xml", "xml/./order.xml", "xml/order.xml/").forEach { name ->
+            platform.generationArtifactMetadata = metadata(name)
+            assertThrows("url <$name>", IllegalArgumentException::class.java) { api.artifacts("p1", "generation-1") }
+        }
+
+        assertTrue(platform.artifactDownloadPaths.isEmpty())
+    }
+
+    @Test
+    fun `a blank segment is a valid name, as on the platform, and does not hide the other artifacts`() {
+        platform.generationArtifactMetadata = pathMetadata("flat.csv", "xml/ /order.xml")
+
+        assertEquals(listOf("flat.csv", "xml/ /order.xml"), api.artifacts("p1", "generation-1").map { it.path })
+    }
+
+    @Test
+    fun `traversal attempts are rejected before a single download sends a request`() {
+        UNSAFE_PATHS.forEach { path ->
+            assertThrows("download path <$path>", IllegalArgumentException::class.java) {
+                api.downloadArtifact("p1", "generation-1", path, java.io.ByteArrayOutputStream()) { true }
+            }
         }
 
         assertTrue(platform.artifactDownloadPaths.isEmpty())
@@ -120,6 +202,90 @@ class ArtifactDownloadTest {
 
         assertArrayEquals(bytes, Files.readAllBytes(target))
         assertNoDownloadTemps(target)
+    }
+
+    @Test
+    fun `atomic download creates the missing subfolders of a nested artifact`() {
+        val target = temp.root.toPath().resolve("xml").resolve("deep").resolve("order.xml")
+        val bytes = byteArrayOf(5, 6, 7)
+        platform.artifactPayload = bytes
+
+        downloadAtomically(target, { true }, { false }) { output, keepGoing ->
+            api.downloadArtifact("p1", "generation-1", "xml/deep/order.xml", output, keepGoing)
+        }
+
+        assertArrayEquals(bytes, Files.readAllBytes(target))
+        assertNoDownloadTemps(target)
+    }
+
+    @Test
+    fun `a failed nested download removes the folders it created and keeps the ones that existed`() {
+        val root = temp.root.toPath()
+        Files.createDirectories(root.resolve("xml"))
+        val target = root.resolve("xml").resolve("deep").resolve("er").resolve("order.xml")
+        platform.artifactPayload = byteArrayOf(5, 6, 7)
+        platform.interruptArtifactDownload = true
+
+        assertThrows(Exception::class.java) {
+            downloadAtomically(target, { true }, { false }) { output, keepGoing ->
+                api.downloadArtifact("p1", "generation-1", "xml/deep/er/order.xml", output, keepGoing)
+            }
+        }
+
+        assertTrue(Files.isDirectory(root.resolve("xml")))
+        assertFalse(Files.exists(root.resolve("xml").resolve("deep")))
+    }
+
+    @Test
+    fun `a folder that holds other files stays after a failed download`() {
+        val root = temp.root.toPath()
+        val target = root.resolve("xml").resolve("order.xml")
+        platform.artifactPayload = byteArrayOf(1)
+        platform.interruptArtifactDownload = true
+
+        assertThrows(Exception::class.java) {
+            downloadAtomically(target, { true }, { false }) { output, keepGoing ->
+                Files.createDirectories(target.parent)
+                Files.writeString(target.parent.resolve("other.txt"), "mine")
+                api.downloadArtifact("p1", "generation-1", "xml/order.xml", output, keepGoing)
+            }
+        }
+
+        assertEquals("mine", Files.readString(target.parent.resolve("other.txt")))
+    }
+
+    @Test
+    fun `a subfolder that becomes a symbolic link after the user chose is refused and nothing is written through it`() {
+        val root = temp.newFolder("chosen").toPath()
+        val outside = temp.newFolder("outside").toPath()
+        val target = artifactTarget(root, "xml/order.xml")
+        platform.artifactPayload = byteArrayOf(1, 2)
+        // The user answers a prompt. Meanwhile another program replaces the subfolder by a link.
+        assumeTrue("symbolic links are not available", runCatching { Files.createSymbolicLink(root.resolve("xml"), outside) }.isSuccess)
+
+        assertThrows(IOException::class.java) {
+            downloadAtomically(target, { true }, { false }, root) { output, keepGoing ->
+                api.downloadArtifact("p1", "generation-1", "xml/order.xml", output, keepGoing)
+            }
+        }
+
+        Files.list(outside).use { assertTrue(it.findAny().isEmpty) }
+        assertTrue(platform.artifactDownloadPaths.isEmpty())
+    }
+
+    @Test
+    fun `a file in the place of a subfolder fails the download and stays`() {
+        val root = temp.root.toPath()
+        Files.writeString(root.resolve("xml"), "not a folder")
+        platform.artifactPayload = byteArrayOf(1)
+
+        assertThrows(IOException::class.java) {
+            downloadAtomically(root.resolve("xml").resolve("order.xml"), { true }, { false }, root) { output, keepGoing ->
+                api.downloadArtifact("p1", "generation-1", "xml/order.xml", output, keepGoing)
+            }
+        }
+
+        assertEquals("not a folder", Files.readString(root.resolve("xml")))
     }
 
     @Test
@@ -232,12 +398,29 @@ class ArtifactDownloadTest {
         """{"url":"/api/v2/projects/p1/tasks/generation-1/artifacts/$name/download","size":"6"}"""
     }
 
+    /** The 4.2.0 platform answers `path` and a percent-encoded `url` for each artifact. */
+    private fun pathMetadata(vararg paths: String) = paths.joinToString(",", "{\"artifacts\":[", "]}") { path ->
+        val url = path.split("/").joinToString("/") { java.net.URLEncoder.encode(it, Charsets.UTF_8).replace("+", "%20") }
+        """{"path":${kotlinx.serialization.json.JsonPrimitive(path)},"url":"/api/v2/projects/p1/tasks/generation-1/artifacts/$url/download","size":"6 B"}"""
+    }
+
+    private fun segments(count: Int) = (1..count).joinToString("/") { "d$it" }
+
     private fun target(name: String, bytes: ByteArray): Path = temp.newFile(name).toPath().also { Files.write(it, bytes) }
 
     private fun assertNoDownloadTemps(target: Path) {
         Files.list(target.parent).use { files ->
             assertTrue(files.noneMatch { it.fileName.toString().startsWith(".datamimic-") })
         }
+    }
+
+    private companion object {
+        /** What the platform rejects with 400 INVALID_FILE_PATH: empty, dot and parent segments, backslashes, control characters. */
+        val UNSAFE_PATHS = listOf(
+            "", ".", "..", "../escape.xml", "xml/../escape.xml", "xml/..", "./order.xml", "xml/./order.xml", "xml/.",
+            "/order.xml", "xml//order.xml", "xml/", "xml\\order.xml", "..\\escape.xml",
+            "xml/or\u0000der.xml", "xml/or\nder.xml", "xml/or\tder.xml", "xml/or\u007fder.xml", "xml/or\u0085der.xml",
+        )
     }
 
     private class FirstWriteOutput(private val delegate: OutputStream, private val wrote: CountDownLatch) : OutputStream() {

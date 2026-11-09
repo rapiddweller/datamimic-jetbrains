@@ -61,6 +61,11 @@
                 description="Generate a DATAMIMIC model from a JSON, XML or CSV file on the platform">
             <add-to-group group-id="NewGroup" anchor="last"/>
         </action>
+        <action id="Datamimic.Migrate" class="com.rapiddweller.datamimic.ide.creation.MigrateFromFileAction"
+                text="DATAMIMIC Migration…" icon="/icons/datamimic.svg"
+                description="Migrate a GWA workbook (.xlsm) or an AMA archive (.ama) to DATAMIMIC files on the platform">
+            <add-to-group group-id="NewGroup" anchor="last"/>
+        </action>
     </actions>
 
     <applicationListeners>

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-01
-- Issues: #63 (files from platform templates), #64 (model from a JSON, XML or CSV file)
+- Issues: #63 (files from platform templates), #64 (model from a JSON, XML or CSV file), #74 (GWA and AMA migration)
 
 ## Context
 
@@ -80,13 +80,13 @@ Behavior:
 
 For #64 (model from a file):
 
-1. The action shows only for one selected `.json`, `.xml` or `.csv` file in a synced folder of a connected DATAMIMIC
-   window. `uploadFlows` decides the extension, so the action repeats no extension list. The model goes into the folder
-   of the source file.
+1. The action shows in the *New* menu of a connected DATAMIMIC window. A file chooser asks for the source file. A selected
+   source file in the Project view skips the chooser. `modelFlows` decides the extension, so the action repeats no
+   extension list. The model goes into the selected folder.
 2. The action saves unsaved editor changes of the source file first, because the upload sends the file on disk.
 3. The flows depend on the extension: a model from JSON, XML or CSV, and a model with a template from JSON or XML. The
-   model flows of JSON and XML offer the generation mode as a `Choice`. A `Choice` list replaces the planned sealed
-   `Field` type, because the name field is the same for all flows and only fixed choices differ.
+   model flows of JSON and XML offer the generation mode as a `Choice`. The CSV flow offers the delimiter as a `Choice`.
+   The sealed `Field` type holds `Choice`, `TextInput` and `FileInput` (see #74).
 4. The name starts as the source file name without its extension. The upload flows have their own name rule: letters,
    digits, `.`, `-` and `_`, a letter or a digit at both ends, no `..` and no `--`. This repeats the platform's name
    cleaning on purpose. Without it, the platform changes the name silently or fails late with a misleading message.
@@ -100,6 +100,21 @@ For #64 (model from a file):
 7. On success, the action pulls the files and opens the model file. The model file is the first target of the request.
 8. Errors: HTTP 409 `UPLOAD_GENERATE_ALREADY_RUNNING` shows a message and starts no second task. Another 4xx returns to
    the dialog with the platform text. A failed task shows the platform text and says that some files can exist.
+
+For #74 (GWA and AMA migration):
+
+1. A second action, *New > DATAMIMIC Migration…*, takes `.xlsm` and `.ama` files. It shares the code of the model
+   action in `FromFileAction`. Each subclass names its flows, so each subclass is a composition root.
+2. GWA writes one `<name>.opctl.csv` file. The field ids are the keys of the platform's `gwaConfig`. The schema version is
+   required free text. Seven optional texts sit in a collapsed group. An empty text is not sent, so the platform
+   default applies and the plugin keeps no copy of it.
+3. AMA needs a second file, the `.ini` file. The platform takes it as Base64 in `custom_fields`. The dialog value of a
+   `FileInput` is the path. The action calls `withEmbeddedFiles`, so the flow gets the content and stays free of I/O.
+   The limit for such a file is 1 MB.
+4. AMA writes the model and a variable number of EDI templates. The worker decides their paths. The plugin assumes the
+   template folder of the dialog (start value `template`). It cannot list the templates before the run. The overwrite
+   check asks when the template folder holds files, and the request names this folder in `folders`.
+5. On success, the plugin pulls all files that the task reports and opens the model file.
 
 Special cases and limits of #64, read from the platform code:
 
@@ -143,5 +158,7 @@ Alternatives not chosen:
 - `CreationTest` for #64: the flows for each extension, the name rule, the request with the model file first, the
   fresh overwrite check, the size limit, upload success, failure, HTTP 409, the deadline, short and long poll outages,
   and a cancel during the poll.
-- `PluginRegistrationTest`: both action ids and the *New* group.
+- `CreationTest` for #74: the flows by extension, the GWA and AMA requests, the embedded file, the folder check, and a
+  full run of each migration against the fake platform.
+- `PluginRegistrationTest`: the three action ids and the *New* group.
 - Not verified yet: the dialogs in a real IDE, the look from 2024.2 to 2026.2, and a run against a real platform.
