@@ -16,7 +16,9 @@ sealed interface CreationRequest {
      * Files that the platform's upload task makes from the local file [source].
      *
      * @param customFields the `custom_fields` form field, including `file_name`.
-     * @param targets the project paths that the task writes. The first is the model file, which the IDE opens.
+     * @param targets the project paths that the task writes. The first is the file that the IDE opens.
+     * @param folders project folders in which the task can replace files that [targets] does not name, for example the
+     *   templates of an AMA migration.
      */
     data class FromUpload(
         val dir: String,
@@ -25,6 +27,7 @@ sealed interface CreationRequest {
         val type: UploadFileType,
         val customFields: JsonObject,
         val targets: List<String>,
+        val folders: List<String> = emptyList(),
     ) : CreationRequest
 }
 

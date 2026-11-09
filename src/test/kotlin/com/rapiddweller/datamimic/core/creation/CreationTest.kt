@@ -9,21 +9,28 @@ import com.rapiddweller.datamimic.core.PlatformErrorCode
 import com.rapiddweller.datamimic.core.PlatformException
 import com.rapiddweller.datamimic.core.PlatformHttp
 import com.rapiddweller.datamimic.core.SessionService
+import com.rapiddweller.datamimic.core.creation.Choice
+import com.rapiddweller.datamimic.core.creation.FileInput
+import com.rapiddweller.datamimic.core.creation.TextInput
 import com.rapiddweller.datamimic.core.creation.container.detectDelimiter
 import com.rapiddweller.datamimic.core.creation.container.templateFlows
-import com.rapiddweller.datamimic.core.creation.container.uploadFlows
+import com.rapiddweller.datamimic.core.creation.container.modelFlows
+import com.rapiddweller.datamimic.core.creation.container.migrationFlows
 import com.rapiddweller.datamimic.core.creation.street.CreatedFile
 import com.rapiddweller.datamimic.core.creation.street.CreatedFiles
 import com.rapiddweller.datamimic.core.creation.street.CreationRequest
+import com.rapiddweller.datamimic.core.creation.street.MAX_EMBEDDED_BYTES
 import com.rapiddweller.datamimic.core.creation.street.MAX_UPLOAD_BYTES
 import com.rapiddweller.datamimic.core.creation.street.PlatformResult
 import com.rapiddweller.datamimic.core.creation.street.UploadFailedException
 import com.rapiddweller.datamimic.core.creation.street.createOnPlatform
+import com.rapiddweller.datamimic.core.creation.street.embeddedProblem
 import com.rapiddweller.datamimic.core.creation.street.existingTargets
 import com.rapiddweller.datamimic.core.creation.street.pullCreated
 import com.rapiddweller.datamimic.core.creation.street.nameProblem
 import com.rapiddweller.datamimic.core.creation.street.sourceProblem
 import com.rapiddweller.datamimic.core.creation.street.targetPaths
+import com.rapiddweller.datamimic.core.creation.street.withEmbeddedFiles
 import com.rapiddweller.datamimic.core.workspace.FileTemplate
 import com.rapiddweller.datamimic.core.workspace.LocksApi
 import com.rapiddweller.datamimic.core.workspace.NoEditor
@@ -105,7 +112,7 @@ class CreationTest {
     private fun source(name: String, content: String = """{"id":1}"""): String =
         temp.newFile(name).toPath().also { Files.writeString(it, content) }.toString()
 
-    private fun flow(source: String, label: String): CreationFlow = uploadFlows(source).single { it.label == label }
+    private fun flow(source: String, label: String): CreationFlow = modelFlows(source).single { it.label == label }
 
     @Test
     fun `a file from a template is created on the platform and pulled into the folder`() {
@@ -196,7 +203,7 @@ class CreationTest {
 
     @Test
     fun `the upload flows depend on the extension, in any case, and keep the labels of the web UI`() {
-        val labels = { source: String -> uploadFlows(source).map { it.label } }
+        val labels = { source: String -> modelFlows(source).map { it.label } }
 
         assertEquals(listOf("Model from JSON", "Model and Template from JSON"), labels("/data/customers.json"))
         assertEquals(listOf("Model from JSON", "Model and Template from JSON"), labels("/data/customers.JSON"))
@@ -204,18 +211,18 @@ class CreationTest {
         assertEquals(listOf("Model from CSV"), labels("C:\\data\\customers.csv"))
         assertEquals(emptyList<String>(), labels("/data/customers.txt"))
         assertEquals(emptyList<String>(), labels("/data/json"))
-        assertEquals(5, (uploadFlows("a.json") + uploadFlows("a.xml") + uploadFlows("a.csv")).map { it.id }.toSet().size)
+        assertEquals(5, (modelFlows("a.json") + modelFlows("a.xml") + modelFlows("a.csv")).map { it.id }.toSet().size)
     }
 
     @Test
     fun `the initial name is the file name without its last extension`() {
-        assertEquals(listOf("customers.v2", "customers.v2"), uploadFlows("/data/customers.v2.json").map { it.initialName })
-        assertEquals("orders", uploadFlows("C:\\data\\orders.csv").single().initialName)
+        assertEquals(listOf("customers.v2", "customers.v2"), modelFlows("/data/customers.v2.json").map { it.initialName })
+        assertEquals("orders", modelFlows("C:\\data\\orders.csv").single().initialName)
     }
 
     @Test
     fun `a name that replaces the source file is refused, and the initial name avoids it`() {
-        val inProject = { source: String, dir: String -> uploadFlows(source, dir, source.removePrefix("/")) }
+        val inProject = { source: String, dir: String -> modelFlows(source, dir, source.removePrefix("/")) }
         val xml = inProject("/data/customers.xml", "data")
 
         assertEquals(listOf("customers-model", "customers-model"), xml.map { it.initialName })
@@ -229,8 +236,8 @@ class CreationTest {
 
     @Test
     fun `a source outside the project, or in another folder, is never replaced`() {
-        val outside = uploadFlows("/home/me/customers.xml", "data", null)
-        val otherFolder = uploadFlows("/p/customers.xml", "data", "other/customers.xml")
+        val outside = modelFlows("/home/me/customers.xml", "data", null)
+        val otherFolder = modelFlows("/p/customers.xml", "data", "other/customers.xml")
 
         for (flows in listOf(outside, otherFolder)) {
             assertEquals(listOf("customers", "customers"), flows.map { it.initialName })
@@ -240,10 +247,10 @@ class CreationTest {
 
     @Test
     fun `only the model flows of JSON and XML offer the generation mode, with mirror first`() {
-        val modes = (uploadFlows("a.json") + uploadFlows("a.xml") + uploadFlows("a.csv")).filter { flow -> flow.choices.any { it.id == "generation_mode" } }
+        val modes = (modelFlows("a.json") + modelFlows("a.xml") + modelFlows("a.csv")).filter { flow -> flow.fields.any { it.id == "generation_mode" } }
 
         assertEquals(listOf("Model from JSON", "Model from XML"), modes.map { it.label })
-        val mode = modes.first().choices.single()
+        val mode = modes.first().fields.filterIsInstance<Choice>().single()
         assertEquals(listOf("mirror", "synthetic"), mode.options.map { it.value })
         assertEquals(listOf("Preserve exact values", "Infer generators & protect PII"), mode.options.map { it.label })
         assertEquals("mirror", mode.default)
@@ -266,8 +273,8 @@ class CreationTest {
 
     @Test
     fun `the CSV flow selects the detected delimiter and sends it, and the project default sends none`() {
-        val csv = { sample: String -> uploadFlows("/in/a.csv", "d", null, sample).single() }
-        val delimiter = { sample: String -> csv(sample).choices.single() }
+        val csv = { sample: String -> modelFlows("/in/a.csv", "d", null, sample).single() }
+        val delimiter = { sample: String -> csv(sample).fields.filterIsInstance<Choice>().single() }
 
         assertEquals("|", delimiter("a|b\n1|2\n").default)
         assertEquals("", delimiter("a\n1\n").default)
@@ -314,7 +321,7 @@ class CreationTest {
 
     @Test
     fun `the upload name rule accepts only names that the platform keeps unchanged`() {
-        val rule = uploadFlows("a.json").first()
+        val rule = modelFlows("a.json").first()
         listOf("customers", "my-data_1.v2", "a", "A9").forEach { assertNull(it, rule.nameProblem(it)) }
         listOf("", "_x", "x_", "a..b", "a--b", "a b", "Straße", ".x", "x-", "a/b").forEach { assertNotNull(it, rule.nameProblem(it)) }
         assertNull(templateFlows(listOf(FileTemplate("Ent", ".ent.csv"))).single().nameProblem("my customers"))
@@ -459,5 +466,112 @@ class CreationTest {
         assertNull(returned)
         assertNotNull(cancelled)
         assertEquals(polls, platform.uploadPolls.getValue("t1"))
+    }
+
+    private fun migration(name: String): CreationFlow = migrationFlows("/in/$name").single()
+
+    private fun upload(request: CreationRequest) = request as CreationRequest.FromUpload
+
+    @Test
+    fun `GWA and AMA files get a migration flow and other files get none`() {
+        assertEquals(listOf("GWA migration"), migrationFlows("/in/Cases.XLSM").map { it.label })
+        assertEquals(listOf("AMA migration"), migrationFlows("C:\\in\\app.ama").map { it.label })
+        assertEquals(emptyList<String>(), migrationFlows("/in/a.json").map { it.label } + migrationFlows("/in/a.xlsx").map { it.label })
+        assertEquals(emptyList<String>(), modelFlows("/in/a.xlsm").map { it.label } + modelFlows("/in/a.ama").map { it.label })
+        assertEquals("Cases", migration("Cases.xlsm").initialName)
+    }
+
+    @Test
+    fun `the GWA flow needs the schema version and sends only the texts that the user entered`() {
+        val flow = migration("cases.xlsm")
+        val schema = flow.fields.filterIsInstance<TextInput>().single { it.required }
+
+        assertEquals("schemaVersion", schema.id)
+        assertEquals(7, flow.fields.filterIsInstance<TextInput>().count { it.advanced })
+        val request = upload(flow.toRequest("d", "people", mapOf("schemaVersion" to " 2024.1 ", "sheetName" to "Cases", "idColumn" to " ", "templateDirectory" to "")))
+
+        assertEquals(UploadFileType.GWA_MIGRATION, request.type)
+        assertEquals(
+            buildJsonObject {
+                put("file_name", "people")
+                put("gwaConfig", buildJsonObject { put("schemaVersion", "2024.1"); put("sheetName", "Cases") })
+            },
+            request.customFields,
+        )
+        assertEquals(listOf("d/people.opctl.csv"), request.targets)
+        assertEquals(emptyList<String>(), request.folders)
+        assertNotNull(flow.nameProblem("a b"))
+    }
+
+    @Test
+    fun `the AMA flow sends the INI content and the template folder, and names the folder it can fill`() {
+        val flow = migration("app.ama")
+        val ini = flow.fields.filterIsInstance<FileInput>().single()
+        val folder = flow.fields.filterIsInstance<TextInput>().single()
+
+        assertEquals(listOf("ini"), ini.extensions)
+        assertEquals("template", folder.default)
+        val request = upload(flow.toRequest("d", "app", mapOf("iniContentB64" to "SU5J", "templateDirectory" to "tpl")))
+
+        assertEquals(UploadFileType.AMA_MIGRATION, request.type)
+        assertEquals(
+            buildJsonObject {
+                put("file_name", "app")
+                put("amaConfig", buildJsonObject { put("iniContentB64", "SU5J"); put("templateDirectory", "tpl") })
+            },
+            request.customFields,
+        )
+        assertEquals(listOf("d/app.xml"), request.targets)
+        assertEquals(listOf("d/tpl"), request.folders)
+        assertEquals(emptyList<String>(), upload(flow.toRequest("", "app", mapOf("iniContentB64" to "SU5J", "templateDirectory" to " "))).folders)
+        assertEquals(listOf("tpl"), upload(flow.toRequest("", "app", mapOf("templateDirectory" to "tpl"))).folders)
+    }
+
+    @Test
+    fun `a file field gives the Base64 content to the flow, and a missing or large file is a problem`() {
+        val ini = Files.writeString(temp.newFile("a.ini").toPath(), "[a]").toString()
+        val fields = migration("app.ama").fields
+
+        assertEquals(mapOf("iniContentB64" to "W2Fd", "templateDirectory" to "template"), withEmbeddedFiles(fields, mapOf("iniContentB64" to ini, "templateDirectory" to "template")))
+        assertEquals("a blank path stays blank, and the flow sends nothing for it", " ", withEmbeddedFiles(fields, mapOf("iniContentB64" to " "))["iniContentB64"])
+        assertThrows(java.io.IOException::class.java) { withEmbeddedFiles(fields, mapOf("iniContentB64" to temp.root.resolve("missing.ini").path)) }
+        assertNull(embeddedProblem(ini))
+        assertNotNull(embeddedProblem(temp.root.resolve("missing.ini").path))
+        val large = temp.newFile("large.ini")
+        RandomAccessFile(large, "rw").use { it.setLength(MAX_EMBEDDED_BYTES + 1) }
+        assertNotNull(embeddedProblem(large.path))
+    }
+
+    @Test
+    fun `existing targets include the files in the folders that the task can fill`() {
+        val request = upload(migration("app.ama").toRequest("d", "app", mapOf("templateDirectory" to "tpl")))
+        platform.files["d/app.xml"] = "<setup/>" to "etag-1"
+        platform.files["d/tpl/old.edi"] = "edi" to "etag-1"
+        platform.files["d/other/keep.edi"] = "edi" to "etag-1"
+        platform.files["d/tplx/keep.edi"] = "edi" to "etag-1"
+
+        assertEquals(listOf("d/app.xml", "d/tpl/old.edi"), runBlocking { existingTargets(request, api, session) }.sorted())
+    }
+
+    @Test
+    fun `an AMA migration writes the model and the templates and all of them are pulled`() {
+        val request = upload(migration("app.ama").toRequest("d", "app", mapOf("iniContentB64" to "SU5J")))
+        val file = source("app.ama", "archive")
+
+        val created = runBlocking { create(request.copy(source = file)) }
+
+        assertEquals(listOf("d/app.xml", "d/template/a.edi", "d/template/b.edi"), created.map { it.path })
+        assertTrue(created.all { it.local != null })
+        assertEquals("ama_migration", platform.uploadTaskStarts.single().fileType)
+    }
+
+    @Test
+    fun `a GWA migration writes one opctl file`() {
+        val request = upload(migration("cases.xlsm").toRequest("", "cases", mapOf("schemaVersion" to "1")))
+
+        val created = runBlocking { create(request.copy(source = source("cases.xlsm", "workbook"))) }
+
+        assertEquals(listOf("cases.opctl.csv"), created.map { it.path })
+        assertNotNull(created.single().local)
     }
 }
