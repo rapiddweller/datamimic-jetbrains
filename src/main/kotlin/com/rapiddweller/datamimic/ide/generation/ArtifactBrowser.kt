@@ -9,16 +9,20 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.components.JBScrollPane
 import com.rapiddweller.datamimic.core.DOWNLOAD_TIMEOUT
 import com.rapiddweller.datamimic.core.PlatformSessionFence
 import com.rapiddweller.datamimic.core.generation.GenerationRun
+import com.rapiddweller.datamimic.ide.toNioPathOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -77,8 +81,17 @@ internal class ArtifactBrowser(
             add(downloadAll)
         }, BorderLayout.SOUTH)
         retry.addActionListener { load(force = true) }
-        download.addActionListener { list.selectedValue?.let { save(it.entityName) { output, keepGoing -> run.downloadArtifact(it.entityName, output, keepGoing) } } }
-        downloadAll.addActionListener { save("${run.taskId}_artifacts.zip") { output, keepGoing -> run.downloadArtifacts(output, keepGoing) } }
+        download.addActionListener {
+            list.selectedValue?.path?.let { path ->
+                // WHY: a flat artifact keeps the save dialog, where the user can rename the file. A nested one needs a folder.
+                val choice = if ('/' in path) chooseFolderTarget(path) else chooseFileTarget(path)?.let { SaveChoice(it, null) }
+                choice?.let { transferTo(it, path) { output, keepGoing -> run.downloadArtifact(path, output, keepGoing) } }
+            }
+        }
+        downloadAll.addActionListener {
+            val name = "${run.taskId}_artifacts.zip"
+            chooseFileTarget(name)?.let { transferTo(SaveChoice(it, null), name) { output, keepGoing -> run.downloadArtifacts(output, keepGoing) } }
+        }
         list.addListSelectionListener { if (!it.valueIsAdjusting) updateActions() }
         updateActions()
     }
@@ -117,15 +130,44 @@ internal class ArtifactBrowser(
         }
     }
 
-    private fun save(name: String, downloadAction: (java.io.OutputStream, () -> Boolean) -> PlatformSessionFence) {
-        if (!current() || project.isDisposed || transfer?.isActive == true) return
-        val target = FileChooserFactory.getInstance()
+    private fun idle() = current() && !project.isDisposed && transfer?.isActive != true
+
+    private fun startFolder() = project.basePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }
+
+    /** The file to write and, for a nested artifact, the folder that the file must stay in. */
+    private class SaveChoice(val target: Path, val confinedTo: Path?)
+
+    /** The user chooses a folder. A nested artifact such as `xml/order.xml` goes into the matching subfolder of it. */
+    private fun chooseFolderTarget(artifactPath: String): SaveChoice? {
+        if (!idle()) return null
+        val descriptor = FileChooserDescriptor(false, true, false, false, false, false)
+            .withTitle("Save Artifact to Folder")
+            .withDescription("The artifact $artifactPath is saved below this folder.")
+        val folder = FileChooser.chooseFile(descriptor, project, startFolder())?.toNioPathOrNull() ?: return null
+        if (!current()) return null
+        return try {
+            val replaceYes = { existing: Path ->
+                Messages.showYesNoDialog(project, "$existing already exists. Replace it?", "Save Artifact", "Replace", "Cancel", Messages.getWarningIcon()) == Messages.YES
+            }
+            artifactSaveTarget(folder, artifactPath, replaceYes)?.takeIf { current() }?.let { SaveChoice(it, folder) }
+        } catch (error: Exception) {
+            state.text = "Cannot save $artifactPath: ${error.message ?: error.javaClass.simpleName}"
+            null
+        }
+    }
+
+    private fun chooseFileTarget(name: String): Path? {
+        if (!idle()) return null
+        return FileChooserFactory.getInstance()
             .createSaveFileDialog(FileSaverDescriptor("Save artifact", "Save generated DATAMIMIC artifact", *emptyArray()), project)
             .save(Path.of(project.basePath ?: System.getProperty("user.home")), name)
             ?.file
             ?.toPath()
-            ?: return
-        if (!current()) return
+            ?.takeIf { current() }
+    }
+
+    private fun transferTo(choice: SaveChoice, name: String, downloadAction: (java.io.OutputStream, () -> Boolean) -> PlatformSessionFence) {
+        val target = choice.target
         downloading = true
         state.text = "Downloading $name…"
         updateActions()
@@ -138,15 +180,14 @@ internal class ArtifactBrowser(
                             target,
                             { timeoutJob.isActive && !disposed && scope.isActive && !project.isDisposed && current() },
                             ::hasUnsavedEdits,
+                            choice.confinedTo,
                             downloadAction,
                         )
                         if (FileTypeManager.getInstance().getFileTypeByFileName(target.fileName.toString()).isBinary) {
                             null
                         } else {
-                            LocalFileSystem.getInstance().run {
-                                refreshNioFiles(listOf(target), false, false, null)
-                                findFileByNioFile(target)
-                            }
+                            // WHY: a nested file can be in a folder that the IDE does not know yet.
+                            LocalFileSystem.getInstance().refreshAndFindFileByNioFile(target)
                         }
                     }
                 }
@@ -195,15 +236,24 @@ internal class ArtifactBrowser(
     }
 }
 
-/** Publishes only a complete download; every earlier failure leaves an existing destination untouched. */
+/**
+ * Publishes only a complete download; every earlier failure leaves an existing destination untouched. A nested artifact
+ * can need subfolders. This function creates them, and removes the ones it created when the download fails.
+ * With [confinedTo] it refuses a destination that resolves outside that folder, also through a symbolic link made after the user chose.
+ */
 internal fun downloadAtomically(
     target: Path,
     keepGoing: () -> Boolean,
     hasUnsavedEdits: (Path) -> Boolean,
+    confinedTo: Path? = null,
     download: (java.io.OutputStream, () -> Boolean) -> PlatformSessionFence,
 ) {
     val destination = target.toAbsolutePath()
-    val temp = Files.createTempFile(checkNotNull(destination.parent), ".datamimic-", ".tmp")
+    val parent = checkNotNull(destination.parent)
+    confinedTo?.let { requireInside(it, parent) }
+    val created = generateSequence(parent) { it.parent }.takeWhile { !Files.exists(it) }.toList()
+    val temp = Files.createTempFile(Files.createDirectories(parent), ".datamimic-", ".tmp")
+    var published = false
     try {
         val fence = Files.newOutputStream(temp).use { output -> download(output, keepGoing) }
         if (!keepGoing()) throw CancellationException("Artifact download cancelled.")
@@ -218,7 +268,10 @@ internal fun downloadAtomically(
         } else {
             WriteAction.runAndWait<Exception> { fence.publish(publish) }
         }
+        published = true
     } finally {
         Files.deleteIfExists(temp)
+        // The nearest folder is first, so a folder is empty when the function reaches it. A folder with content stays.
+        if (!published) created.forEach { runCatching { Files.deleteIfExists(it) } }
     }
 }

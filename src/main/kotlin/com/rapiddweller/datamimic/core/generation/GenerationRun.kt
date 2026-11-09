@@ -95,8 +95,8 @@ class GenerationRun(
 
     fun artifacts(): List<TaskArtifact> = api.artifacts(projectId, taskId)
 
-    internal fun downloadArtifact(entityName: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
-        api.downloadArtifact(projectId, taskId, entityName, output, keepGoing)
+    internal fun downloadArtifact(path: String, output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
+        api.downloadArtifact(projectId, taskId, path, output, keepGoing)
 
     internal fun downloadArtifacts(output: OutputStream, keepGoing: () -> Boolean): PlatformSessionFence =
         api.downloadArtifacts(projectId, taskId, output, keepGoing)
