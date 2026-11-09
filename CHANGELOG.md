@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Show artifacts in subfolders. The artifact list shows the relative path, such as `xml/order.xml`, with the size. Before, one nested artifact made the whole list fail with "The platform returned invalid artifact metadata." You can download a nested artifact, and the ZIP download is unchanged. The plugin reads the exact `path` from Platform 4.2.0, so a name with a space or a special character keeps its form.
+- Save a nested artifact into the matching subfolder. **Save / Open** asks for a folder and puts the file below it. The plugin asks before it replaces a file. A flat artifact keeps the save dialog. The plugin refuses an unsafe path: an empty, `.` or `..` segment, a backslash, a control character, or more than 32 segments. It also refuses a path that leaves the chosen folder, for example through a symbolic link.
 - Generate a DATAMIMIC model from a JSON, XML or CSV file: choose *New > DATAMIMIC Model from File…* and select the file. The file can be anywhere on the disk. For a CSV file the dialog detects the delimiter and lets you change it, because the platform does not detect it. The platform writes the model, and with the template flow also a template, into the selected folder. The plugin asks before it replaces existing files, and the model opens when it is ready.
 
 - Migrate GWA and AMA files: choose *New > DATAMIMIC Migration…* and select an `.xlsm` workbook or an `.ama` archive. The dialog asks for the schema version (GWA) or the `.ini` file and the template folder (AMA). The plugin asks before it replaces files in the template folder, and the result opens when it is ready.

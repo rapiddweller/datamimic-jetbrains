@@ -48,7 +48,9 @@ generation runs, and MCP access for IDE agents.
   platform cancellation, while closing a view only stops local observation.
 - The bottom **Generation Tasks** tool window lists recent platform generation tasks. Select a task to reopen its logs and
   preview samples. Successful tasks also expose **Artifacts**: save one file, open saved text files in the IDE, or
-  download every artifact as a ZIP.
+  download every artifact as a ZIP. An artifact in a subfolder shows its relative path, such as `xml/order.xml`. **Save /
+  Open** asks for a folder and saves a nested artifact into the matching subfolder. The plugin refuses a path that
+  leaves the chosen folder, and it asks before it replaces a file.
 
 ## Junie routing
 
