@@ -58,6 +58,11 @@ class FakePlatform : AutoCloseable {
     var artifactFirstChunk: ByteArray? = null
     var artifactChunkGate: CountDownLatch? = null
     var artifactFirstChunkWritten: CountDownLatch? = null
+    /** The Operate API of Platform 4.2.0: every request that reached it, and the answer it gives. */
+    @Volatile var operateStatus = 200
+    @Volatile var operateResponse =
+        """{"task_id":"generation-1","operate_id":"op-1","artifacts":[{"id":"case-1","content":"<order/>\n","media_type":"application/xml","outcomes":[{"operation_index":0,"command":"set(//order/id, '2')","status":"applied","path":null}]}]}"""
+    val operateRequests = CopyOnWriteArrayList<String>()
     val generationRequests = CopyOnWriteArrayList<String>()
     val generationSearchRequests = CopyOnWriteArrayList<String>()
     val cancelledGenerationTasks = CopyOnWriteArrayList<String>()
@@ -395,6 +400,7 @@ class FakePlatform : AutoCloseable {
                         exchange.respond(200, generationArtifactMetadata)
                     }
                 }
+                path == "${prefix}operate" -> operate(exchange)
                 path == "${prefix}download" -> {
                     artifactDownloadPaths += exchange.requestURI.rawPath
                     exchange.respondBytes(200, artifactZipPayload)
@@ -406,6 +412,7 @@ class FakePlatform : AutoCloseable {
                 else -> exchange.error(404, "NOT_FOUND", "missing")
             }
         }
+        authenticated("/api/v2/projects/p1/tasks/latest/artifacts/operate") { exchange -> operate(exchange) }
         authenticated("/api/v2/tasks/generation-1/cancel") { exchange ->
             cancelledGenerationTasks += "generation-1"
             generationStatus = "CANCELLED"
@@ -471,6 +478,12 @@ class FakePlatform : AutoCloseable {
             exchange.requestMethod != "GET" && !originOk(exchange) -> exchange.error(403, "AUTH_ORIGIN_FORBIDDEN", "Browser request origin is not allowed")
             else -> handler(exchange)
         }
+    }
+
+    private fun operate(exchange: HttpExchange) {
+        operateRequests += "${exchange.requestMethod} ${exchange.requestURI.rawPath} ${exchange.body()}"
+        if (exchange.requestMethod != "POST") return exchange.error(405, "METHOD_NOT_ALLOWED", "Method Not Allowed")
+        exchange.respond(operateStatus, operateResponse)
     }
 
     private fun originOk(exchange: HttpExchange) = exchange.requestHeaders.getFirst("Origin") == origin.value

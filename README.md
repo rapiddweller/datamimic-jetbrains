@@ -51,6 +51,11 @@ generation runs, and MCP access for IDE agents.
   download every artifact as a ZIP. An artifact in a subfolder shows its relative path, such as `xml/order.xml`. **Save /
   Open** asks for a folder and saves a nested artifact into the matching subfolder. The plugin refuses a path that
   leaves the chosen folder, and it asks before it replaces a file.
+- **Build Operate curl…** on an XML or JSON artifact builds a `curl` command for the Artifact Operate API (Platform
+  4.2.0). Set the task, the rows and their operations. The dialog shows the command and the request body, copies the
+  command, and saves `request.json`. The script sets `DATAMIMIC_URL`, `PROJECT_ID` and `TASK_ID` for you. The command reads
+  the token from `$PROJECT_TOKEN`. The plugin never writes a token. **Run now** sends the call with the IDE
+  session and shows the response.
 
 ## Junie routing
 

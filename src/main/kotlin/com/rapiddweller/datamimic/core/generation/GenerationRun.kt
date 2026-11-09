@@ -12,7 +12,7 @@ import java.io.OutputStream
 /** Read-only observation of one Platform task. Closing this object never cancels that task. */
 class GenerationRun(
     private val api: GenerationApi,
-    private val projectId: String,
+    val projectId: String,
     val taskId: String,
     private val startedAt: Long = System.currentTimeMillis(),
     private val now: () -> Long = System::currentTimeMillis,
