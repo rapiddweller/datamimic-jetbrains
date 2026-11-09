@@ -223,6 +223,13 @@ class GenerationApi(private val http: PlatformHttp) {
             .artifacts
             .map { toArtifact(it, projectId, taskId) }
 
+    /**
+     * Applies operations to stored artifacts of a finished task and returns the resulting artifacts. [taskId] can be
+     * `latest`. The platform stores nothing: the response is the only record of the call.
+     */
+    fun operate(projectId: String, taskId: String, body: String): OperateResponse =
+        json.decodeFromString<OperateResponse>(http.postJson("${base(projectId)}/tasks/${encode(taskId)}/artifacts/operate", body))
+
     internal fun downloadArtifact(
         projectId: String,
         taskId: String,

@@ -22,6 +22,9 @@ import com.intellij.ui.components.JBScrollPane
 import com.rapiddweller.datamimic.core.DOWNLOAD_TIMEOUT
 import com.rapiddweller.datamimic.core.PlatformSessionFence
 import com.rapiddweller.datamimic.core.generation.GenerationRun
+import com.rapiddweller.datamimic.core.generation.OperateFormat
+import com.rapiddweller.datamimic.ide.DatamimicPlatform
+import com.rapiddweller.datamimic.ide.activeProject
 import com.rapiddweller.datamimic.ide.toNioPathOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -64,6 +67,9 @@ internal class ArtifactBrowser(
     private val retry = JButton("Retry")
     private val download = JButton("Save / Open")
     private val downloadAll = JButton("Download All (ZIP)")
+    private val operate = JButton("Build Operate curl…").apply {
+        toolTipText = "Build a curl command for the Artifact Operate API. It works on XML and JSON artifacts."
+    }
     private var metadataRequest = 0L
     private var transfer: Job? = null
     private var loading = false
@@ -79,6 +85,7 @@ internal class ArtifactBrowser(
             add(retry)
             add(download)
             add(downloadAll)
+            add(operate)
         }, BorderLayout.SOUTH)
         retry.addActionListener { load(force = true) }
         download.addActionListener {
@@ -92,8 +99,23 @@ internal class ArtifactBrowser(
             val name = "${run.taskId}_artifacts.zip"
             chooseFileTarget(name)?.let { transferTo(SaveChoice(it, null), name) { output, keepGoing -> run.downloadArtifacts(output, keepGoing) } }
         }
+        operate.addActionListener { list.selectedValue?.let { openOperateDialog(it.path) } }
         list.addListSelectionListener { if (!it.valueIsAdjusting) updateActions() }
         updateActions()
+    }
+
+    /** The command and the response use the active DATAMIMIC project, which must be the project of this task. */
+    private fun openOperateDialog(artifactPath: String) {
+        if (!current() || project.isDisposed) return
+        val format = OperateFormat.of(artifactPath) ?: return
+        val identity = project.activeProject().identity
+        if (identity == null || identity.projectId != run.projectId) {
+            state.text = "The active DATAMIMIC project is not the project of this task."
+            return
+        }
+        OperateCurlDialog(project, artifactPath, format, run.taskId, identity) { task, body ->
+            DatamimicPlatform.getInstance().generation.boundTo(identity.origin).operate(identity.projectId, task, body)
+        }.show()
     }
 
     fun load(force: Boolean = false) {
@@ -222,6 +244,7 @@ internal class ArtifactBrowser(
     private fun updateActions() {
         download.isEnabled = !downloading && !loading && list.selectedValue != null
         downloadAll.isEnabled = !downloading && !loading && artifacts.size() > 0
+        operate.isEnabled = !loading && list.selectedValue?.let { OperateFormat.of(it.path) } != null
         retry.isEnabled = !downloading && !loading
     }
 
