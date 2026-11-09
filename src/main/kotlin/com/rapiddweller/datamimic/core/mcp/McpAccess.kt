@@ -12,6 +12,7 @@ import com.rapiddweller.datamimic.core.PlatformOrigin
 import com.rapiddweller.datamimic.core.encode
 import com.rapiddweller.datamimic.core.encodePath
 import com.rapiddweller.datamimic.core.json
+import com.rapiddweller.datamimic.core.parsePlatformInstant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -23,9 +24,6 @@ import java.security.MessageDigest
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDateTime
-import java.time.OffsetDateTime
-import java.time.ZoneOffset
 import java.util.Base64
 
 @Serializable
@@ -64,11 +62,7 @@ class ProjectTokensApi(private val http: PlatformHttp) {
 
     private fun base(projectId: String) = "/api/v2/projects/${encode(projectId)}/project-access-tokens"
 
-    private fun toToken(response: ProjectTokenResponse) = ProjectToken(response.name, response.token, parseInstant(response.expirationDate))
-
-    // WHY: the platform stores naive UTC timestamps; depending on the serializer they arrive with or without an offset.
-    private fun parseInstant(value: String): Instant =
-        runCatching { OffsetDateTime.parse(value).toInstant() }.getOrElse { LocalDateTime.parse(value).toInstant(ZoneOffset.UTC) }
+    private fun toToken(response: ProjectTokenResponse) = ProjectToken(response.name, response.token, parsePlatformInstant(response.expirationDate))
 }
 
 /** Everything an IDE agent needs to reach the active project's MCP server. */

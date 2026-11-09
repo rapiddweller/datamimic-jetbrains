@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Add a comment to a generation task. The **Generation Tasks** list shows the comment in a column next to each task. Select a task to edit its comment below the details. The editor shows the length as `n/500`, the last editor and the edit time. Comments need Platform 4.2.0.
+- The **Save** button of the comment editor is disabled while the text is unchanged. The plugin trims the text before it sends it. A blank text removes the comment. If a save fails, the draft stays in the editor and the editor shows the error. A draft also stays when you select another task and come back.
 - Build a `curl` command for the Artifact Operate API. Select an XML or JSON artifact and choose **Build Operate curl…**. Choose the task (the selected task or `latest`), the action for an operation without a match, and the rows with their operations. A helper builds each operation from the list of the platform reference.
 - The **Build Operate curl** dialog shows the command and the request body at once. **Copy** copies the command, and **Save as request.json…** saves the body. The command reads the token from `$PROJECT_TOKEN`. The plugin never writes a token into the command, the clipboard, a file or the log.
 - **Run now** in the same dialog sends the call with the session of the IDE and shows the response. It needs no token. The Operate API needs Platform 4.2.0.

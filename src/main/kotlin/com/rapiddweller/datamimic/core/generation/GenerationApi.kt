@@ -11,6 +11,7 @@ import com.rapiddweller.datamimic.core.PlatformHeader
 import com.rapiddweller.datamimic.core.PlatformHttp
 import com.rapiddweller.datamimic.core.PlatformSessionFence
 import com.rapiddweller.datamimic.core.PlatformOrigin
+import com.rapiddweller.datamimic.core.RequestBody
 import com.rapiddweller.datamimic.core.encode
 import com.rapiddweller.datamimic.core.encodePath
 import com.rapiddweller.datamimic.core.json
@@ -103,6 +104,17 @@ private data class TaskHistoryRow(
     val status: JsonElement? = null,
     val name: String? = null,
     @SerialName("date_queued") val dateQueued: String? = null,
+    // WHY: Platform 4.2.0 adds the comment fields. Older platforms omit them.
+    val comment: String? = null,
+    @SerialName("comment_updated_by") val commentUpdatedBy: String? = null,
+    @SerialName("comment_updated_at") val commentUpdatedAt: String? = null,
+)
+
+@Serializable
+private data class TaskCommentResponse(
+    val comment: String? = null,
+    @SerialName("comment_updated_by") val commentUpdatedBy: String? = null,
+    @SerialName("comment_updated_at") val commentUpdatedAt: String? = null,
 )
 
 @Serializable
@@ -199,10 +211,28 @@ class GenerationApi(private val http: PlatformHttp) {
         }
         val response = json.decodeFromString<TaskHistoryResponse>(http.postJson("${base(projectId)}/tasks/search", body.toString()))
         return GenerationTaskPage(
-            response.data.map { GenerationTask(it.taskId, it.status?.let(::decodeStatus).asStatus(), it.name, it.dateQueued) },
+            response.data.map {
+                GenerationTask(
+                    it.taskId,
+                    it.status?.let(::decodeStatus).asStatus(),
+                    it.name,
+                    it.dateQueued,
+                    TaskComment(it.comment, it.commentUpdatedBy, it.commentUpdatedAt),
+                )
+            },
             response.meta.pagination.currentPage,
             response.meta.pagination.totalPages,
         )
+    }
+
+    /**
+     * Sets the comment of a task in any status. The platform strips the text, and a blank text removes the comment.
+     * The last save wins. The platform rejects a text of more than [MAX_COMMENT_LENGTH] characters; the editor does not send one.
+     */
+    fun updateComment(projectId: String, taskId: String, comment: String): TaskComment {
+        val body = buildJsonObject { put("comment", comment.trim()) }
+        val response = http.send(HttpMethod.PUT, "${base(projectId)}/tasks/${encode(taskId)}/comment", RequestBody.Json(body.toString()))
+        return json.decodeFromString<TaskCommentResponse>(response.body).let { TaskComment(it.comment, it.commentUpdatedBy, it.commentUpdatedAt) }
     }
 
     fun logs(projectId: String, taskId: String): TaskLog {
@@ -276,8 +306,24 @@ private fun TaskObservation?.asStatus(): TaskStatus? = when (this) {
 data class DispatchResult(val taskId: String, val message: String?)
 
 /** One task in the Platform-owned generation history. */
-data class GenerationTask(val taskId: String, val status: TaskStatus?, val name: String?, val queuedAt: String?) {
+data class GenerationTask(
+    val taskId: String,
+    val status: TaskStatus?,
+    val name: String?,
+    val queuedAt: String?,
+    val comment: TaskComment = TaskComment.NONE,
+) {
     override fun toString(): String = listOfNotNull(status?.name, name, queuedAt, taskId.take(8)).joinToString(" · ")
+}
+
+/** The most characters of a task comment, counted as the platform counts them: one for each Unicode character. */
+const val MAX_COMMENT_LENGTH = 500
+
+/** The comment of a task. The platform keeps [updatedBy] and [updatedAt] after it removes the [text]. */
+data class TaskComment(val text: String?, val updatedBy: String?, val updatedAt: String?) {
+    companion object {
+        val NONE = TaskComment(null, null, null)
+    }
 }
 
 data class GenerationTaskPage(val tasks: List<GenerationTask>, val page: Int, val totalPages: Int)

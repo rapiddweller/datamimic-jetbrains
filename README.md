@@ -48,6 +48,10 @@ generation runs, and MCP access for IDE agents.
   platform cancellation, while closing a view only stops local observation.
 - The bottom **Generation Tasks** tool window lists recent platform generation tasks. Select a task to reopen its logs and
   preview samples. Successful tasks also expose **Artifacts**: save one file, open saved text files in the IDE, or
+  download every artifact as a ZIP.
+- A task in any status can have a comment of up to 500 characters (Platform 4.2.0). The list shows it in a column. Select
+  a task to edit the comment below the details. The editor shows the last editor and the edit time. If a save fails, the
+  draft stays in the editor. When two people edit the same comment, the last save wins.
   download every artifact as a ZIP. An artifact in a subfolder shows its relative path, such as `xml/order.xml`. **Save /
   Open** asks for a folder and saves a nested artifact into the matching subfolder. The plugin refuses a path that
   leaves the chosen folder, and it asks before it replaces a file.
